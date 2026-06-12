@@ -13,6 +13,8 @@ class Config:
     conf: float = 0.40
     window_title: str = "Minecraft"
     device: str | None = None  # None -> ultralytics auto-selects (CUDA if available)
+    track: bool = True  # persistent object IDs via ByteTrack (Phase 2)
+    half: bool = False  # FP16 inference - faster on RTX GPUs
     debug_view: bool = False
     monitor: int = 1  # mss monitor index used when the window is not found
 
@@ -40,6 +42,17 @@ def parse_args(argv: list[str] | None = None) -> Config:
     )
     p.add_argument("--device", default=d.device, help="torch device, e.g. 0 or cpu (default: auto)")
     p.add_argument(
+        "--no-track",
+        dest="track",
+        action="store_false",
+        help="Disable cross-frame tracking (objects get throwaway IDs)",
+    )
+    p.add_argument(
+        "--half",
+        action="store_true",
+        help="FP16 inference - roughly 1.5-2x faster on RTX GPUs",
+    )
+    p.add_argument(
         "--debug-view",
         action="store_true",
         help="Show an OpenCV window with drawn detections (validate without the mod; q to quit)",
@@ -59,6 +72,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
         conf=a.conf,
         window_title=a.window_title,
         device=a.device,
+        track=a.track,
+        half=a.half,
         debug_view=a.debug_view,
         monitor=a.monitor,
     )

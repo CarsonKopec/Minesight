@@ -33,8 +33,9 @@ Sent once per inference frame (uncapped, typically 60–100+ FPS on a 4060 Ti).
 - `frame_w`, `frame_h` — capture frame size; the mod uses these to rescale into
   its GUI coordinates, so resolution mismatches stay aligned. *(Extension over
   the spec's minimal example.)*
-- `id` — object ID. Phase 1 assigns sequential IDs; Phase 2 (SORT/DeepSORT)
-  will make them persistent across frames.
+- `id` — object ID, **persistent across frames** (Phase 2: ByteTrack, the
+  modern successor of the spec's SORT, runs in the engine by default;
+  `--no-track` falls back to throwaway sequential IDs).
 - `ts` — engine wall-clock ms. The mod independently timestamps arrival and
   stops rendering frames older than 2 s (engine stopped/stalled), while holding
   the last known state between updates per the spec's frame-rate note.
@@ -97,6 +98,7 @@ GUI → mod:
   "negative_ratio": 0.0,
   "settle_ticks": 40,
   "avoid_revisits": true,
+  "class_targets": {"gold_ore": 200, "lapis_ore": 200},
   "classes": ["diamond_ore", "gold_ore", "iron_ore", "lapis_ore", "redstone_ore"]
 }
 {"type": "collect_stop"}
@@ -119,7 +121,7 @@ sessions. `collect_clear_history` wipes it for the open world.
 Mod → GUI:
 
 ```json
-{"type": "collect_progress", "saved": 42, "target": 300, "file": "collected_...png", "boxes": 3, "visited": 1234, "thumb": "<base64 JPEG>"}
+{"type": "collect_progress", "saved": 42, "target": 300, "file": "collected_...png", "boxes": 3, "visited": 1234, "class_boxes": {"iron_ore": 80, "gold_ore": 12}, "thumb": "<base64 JPEG>"}
 {"type": "collect_log", "message": "..."}
 {"type": "collect_done", "saved": 300, "reason": "target|stopped|error", "message": "...", "class_counts": {"iron_ore": 120, "gold_ore": 35}}
 ```

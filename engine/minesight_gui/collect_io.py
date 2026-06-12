@@ -20,10 +20,71 @@ def pool_count(session_name: str) -> int:
     return sum(1 for _ in images.glob("*.png")) if images.exists() else 0
 
 
-def finalize(session_name: str, classes: list[str], seed: int = 42) -> Path:
-    """Split the pool 80/10/10 (per the spec) and write data.yaml."""
+def _dhash(img_path: Path, hash_size: int = 8) -> int:
+    """Difference hash: nearly identical frames get nearly identical bits."""
+    from PIL import Image
+
+    with Image.open(img_path) as im:
+        im = im.convert("L").resize((hash_size + 1, hash_size))
+        px = list(im.getdata())
+    bits = 0
+    for row in range(hash_size):
+        for col in range(hash_size):
+            i = row * (hash_size + 1) + col
+            bits = (bits << 1) | (px[i] > px[i + 1])
+    return bits
+
+
+def _label_boxes(pool: Path, stem: str) -> int:
+    label = pool / "labels" / (stem + ".txt")
+    if not label.exists():
+        return 0
+    return sum(1 for line in label.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def dedup_pool(pool: Path, max_distance: int = 5) -> int:
+    """Remove near-duplicate images (similar perceptual hash), keeping the one
+    with more labeled boxes. Returns how many images were removed."""
+    images = sorted((pool / "images").glob("*.png"))
+    kept: list[tuple[int, Path]] = []  # (hash, path)
+    removed = 0
+
+    def delete(img: Path) -> None:
+        img.unlink(missing_ok=True)
+        (pool / "labels" / (img.stem + ".txt")).unlink(missing_ok=True)
+
+    for img in images:
+        try:
+            h = _dhash(img)
+        except Exception:
+            continue  # unreadable image - leave it for the user to inspect
+        duplicate_of = None
+        for i, (kh, kimg) in enumerate(kept):
+            if (h ^ kh).bit_count() <= max_distance:
+                duplicate_of = i
+                break
+        if duplicate_of is None:
+            kept.append((h, img))
+            continue
+        _, other = kept[duplicate_of]
+        if _label_boxes(pool, img.stem) > _label_boxes(pool, other.stem):
+            delete(other)
+            kept[duplicate_of] = (h, img)
+        else:
+            delete(img)
+        removed += 1
+    return removed
+
+
+def finalize(session_name: str, classes: list[str], seed: int = 42,
+             dedup: bool = True) -> tuple[Path, int]:
+    """Dedup, split the pool 80/10/10 (per the spec) and write data.yaml.
+
+    Returns (dataset_dir, near_duplicates_removed).
+    """
     ds_dir = DATASETS_DIR / session_name
     pool = ds_dir / "pool"
+    removed = dedup_pool(pool) if dedup else 0
     images = sorted((pool / "images").glob("*.png"))
     if not images:
         raise ValueError("Pool is empty - collect some images first.")
@@ -57,7 +118,7 @@ def finalize(session_name: str, classes: list[str], seed: int = 42) -> Path:
         f"nc: {len(classes)}\nnames: {classes}\n"
     )
     shutil.rmtree(pool, ignore_errors=True)
-    return ds_dir
+    return ds_dir, removed
 
 
 def merge_into(src_ds: Path, dst_ds: Path) -> int:

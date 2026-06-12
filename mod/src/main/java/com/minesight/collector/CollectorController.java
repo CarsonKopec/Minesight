@@ -54,7 +54,8 @@ public class CollectorController {
 
     private int shotsAtSpot;
     private int dryAttempts;     // targets since the last successful save
-    private String targetLabel;  // class of the aimed ore, for balance stats
+    private String targetLabel;  // class of the aimed ore
+    /** Saved BOXES per class this session - drives balance and class targets. */
     private final java.util.Map<String, Integer> sessionClassCounts =
             new java.util.HashMap<String, Integer>();
     /** 64x64 regions that repeatedly produced no caves/ores; avoided when
@@ -314,6 +315,32 @@ public class CollectorController {
         return (((long) (x >> 6)) << 32) ^ ((z >> 6) & 0xFFFFFFFFL);
     }
 
+    /**
+     * How "satisfied" a class is - lower means hunt it harder. With per-class
+     * targets this is the fill ratio (0 = nothing yet, 1 = done); classes that
+     * are done or untargeted sort last. Without targets it's the raw count.
+     */
+    private double fillScore(String label) {
+        Integer n = sessionClassCounts.get(label);
+        int count = n == null ? 0 : n;
+        if (!session.classTargets.isEmpty()) {
+            Integer t = session.classTargets.get(label);
+            if (t == null || t <= 0) return 1.0e9 + count;  // not requested
+            if (count >= t) return 1.0e6 + count;           // already satisfied
+            return count / (double) t;
+        }
+        return count;
+    }
+
+    private boolean classTargetsMet() {
+        if (session.classTargets.isEmpty()) return false;
+        for (java.util.Map.Entry<String, Integer> e : session.classTargets.entrySet()) {
+            Integer n = sessionClassCounts.get(e.getKey());
+            if ((n == null ? 0 : n) < e.getValue()) return false;
+        }
+        return true;
+    }
+
     private void markBarren() {
         long key = regionKey(mc.thePlayer.getPosition().getX(), mc.thePlayer.getPosition().getZ());
         Integer n = barrenRegions.get(key);
@@ -330,13 +357,12 @@ public class CollectorController {
         // world actually has (0..255) so out-of-range settings still work.
         int userLo = Math.max(1, Math.min(254, session.yMin));
         int userHi = Math.max(userLo, Math.min(254, session.yMax));
-        // Hunt the class with the fewest captures so far, so teleport depths
-        // chase exactly the data the session still needs.
+        // Hunt the neediest class (fewest boxes / lowest target fill), so
+        // teleport depths chase exactly the data the session still needs.
         String cls = session.classes.get(0);
-        int best = Integer.MAX_VALUE;
+        double best = Double.MAX_VALUE;
         for (String c : session.classes) {
-            Integer n = sessionClassCounts.get(c);
-            int score = (n == null ? 0 : n) * 10 + rng.nextInt(10);
+            double score = fillScore(c) + rng.nextDouble() * 0.5;
             if (score < best) {
                 best = score;
                 cls = c;
@@ -423,19 +449,17 @@ public class CollectorController {
             state = State.NEXT_TARGET;
             return;
         }
-        // Prefer the class with the fewest captures this session, so class
-        // balance self-corrects; random order within a class.
-        final java.util.Map<BlockPos, Integer> sortKeys = new java.util.HashMap<BlockPos, Integer>();
+        // Prefer the neediest class (fill ratio when targets are set, raw
+        // count otherwise); random order within a class.
+        final java.util.Map<BlockPos, Double> sortKeys = new java.util.HashMap<BlockPos, Double>();
         for (BlockPos p : candidates) {
             String label = OreScanner.labelFor(mc.theWorld.getBlockState(p).getBlock());
-            Integer count = sessionClassCounts.get(label);
-            int c = count == null ? 0 : count;
-            sortKeys.put(p, c * 100000 + rng.nextInt(100000));
+            sortKeys.put(p, fillScore(label) + rng.nextDouble() * 0.5);
         }
         Collections.sort(candidates, new java.util.Comparator<BlockPos>() {
             @Override
             public int compare(BlockPos a, BlockPos b) {
-                return sortKeys.get(a) - sortKeys.get(b);
+                return Double.compare(sortKeys.get(a), sortKeys.get(b));
             }
         });
         int tries = Math.min(8, candidates.size());
@@ -534,7 +558,7 @@ public class CollectorController {
     }
 
     void onCaptured(ByteBuffer rgba, int width, int height, List<float[]> boxes,
-                    final List<BlockPos> boxedOres) {
+                    final List<BlockPos> boxedOres, final List<String> boxedLabels) {
         captureRequested = false;
         if (session == null) return;
         if (boxes.isEmpty() && !negativeShot) {
@@ -553,9 +577,10 @@ public class CollectorController {
                         session.saved++;
                         dryAttempts = 0;
                         shotsAtSpot++;
-                        if (targetLabel != null) {
-                            Integer c = sessionClassCounts.get(targetLabel);
-                            sessionClassCounts.put(targetLabel, c == null ? 1 : c + 1);
+                        // Count every saved BOX per class (a 6-block vein = 6).
+                        for (String label : boxedLabels) {
+                            Integer c = sessionClassCounts.get(label);
+                            sessionClassCounts.put(label, c == null ? 1 : c + 1);
                         }
                         // Everything boxed in this image counts as photographed.
                         for (BlockPos p : boxedOres) {
@@ -565,7 +590,7 @@ public class CollectorController {
                             visited.saveIfDirty();
                         }
                         sendProgress(fileName, boxCount, thumbB64);
-                        if (session.saved >= session.target) {
+                        if (session.saved >= session.target || classTargetsMet()) {
                             finish("target");
                         } else if (shotsAtSpot < MAX_SHOTS_PER_SPOT) {
                             // This cave system probably has more unvisited ore;
@@ -601,6 +626,11 @@ public class CollectorController {
         o.addProperty("file", fileName);
         o.addProperty("boxes", boxes);
         o.addProperty("visited", visited.size());
+        JsonObject classBoxes = new JsonObject();
+        for (java.util.Map.Entry<String, Integer> e : sessionClassCounts.entrySet()) {
+            classBoxes.addProperty(e.getKey(), e.getValue());
+        }
+        o.add("class_boxes", classBoxes);
         o.addProperty("thumb", thumbB64);
         if (socket != null) socket.send(o);
     }

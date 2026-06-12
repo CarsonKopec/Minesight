@@ -141,15 +141,29 @@ class CollectorTab(QWidget):
             "frames that come back black or featureless."
         )
         grid.addWidget(self.settle, 2, 3)
-        grid.addWidget(QLabel("Classes:"), 3, 0)
+        classes_label = QLabel("Classes (+ box goals):")
+        classes_label.setToolTip(
+            "Tick the ores to photograph. The number next to each is an optional\n"
+            "GOAL in boxes (0 = none): if any goal is set, the session keeps going\n"
+            "until every goal is met (or the image cap above is reached), and the\n"
+            "collector actively hunts whichever class is furthest behind."
+        )
+        grid.addWidget(classes_label, 3, 0)
         classes_row = QHBoxLayout()
         self.class_checks: list[QCheckBox] = []
+        self.class_goals: dict[str, QSpinBox] = {}
         for label, default in COLLECTIBLE:
             cb = QCheckBox(label.replace("_ore", ""))
             cb.setChecked(default)
             cb.setProperty("label", label)
             self.class_checks.append(cb)
             classes_row.addWidget(cb)
+            goal = QSpinBox(minimum=0, maximum=5000, value=0)
+            goal.setFixedWidth(64)
+            goal.setToolTip(f"Minimum {label} boxes to collect (0 = no goal)")
+            self.class_goals[label] = goal
+            classes_row.addWidget(goal)
+            classes_row.addSpacing(8)
         classes_row.addStretch(1)
         grid.addLayout(classes_row, 3, 1, 1, 5)
         layout.addWidget(form_box)
@@ -228,6 +242,10 @@ class CollectorTab(QWidget):
             s.setValue(f"collector/{key}", getattr(self, key).value())
         s.setValue("collector/skipVisited", self.skip_visited.isChecked())
         s.setValue("collector/classes", ",".join(self._checked_classes()))
+        s.setValue(
+            "collector/classGoals",
+            ",".join(f"{label}:{spin.value()}" for label, spin in self.class_goals.items()),
+        )
         self.log.append_line("[settings saved]")
 
     def _load_settings(self) -> None:
@@ -245,6 +263,13 @@ class CollectorTab(QWidget):
             chosen = set(str(saved_classes).split(","))
             for cb in self.class_checks:
                 cb.setChecked(cb.property("label") in chosen)
+        saved_goals = s.value("collector/classGoals")
+        if saved_goals:
+            for part in str(saved_goals).split(","):
+                if ":" in part:
+                    label, _, value = part.partition(":")
+                    if label in self.class_goals and value.isdigit():
+                        self.class_goals[label].setValue(int(value))
 
     def _apply_live(self) -> None:
         self._save_settings()
@@ -268,6 +293,7 @@ class CollectorTab(QWidget):
             "negative_ratio": self.negatives.value(),
             "settle_ticks": self.settle.value(),
             "avoid_revisits": self.skip_visited.isChecked(),
+            "class_targets": self._class_targets(len(in_session)),
         }
         for sock, _info in in_session:
             sock.sendTextMessage(json.dumps(update))
@@ -316,6 +342,15 @@ class CollectorTab(QWidget):
     def _checked_classes(self) -> list[str]:
         return [cb.property("label") for cb in self.class_checks if cb.isChecked()]
 
+    def _class_targets(self, n_clients: int) -> dict[str, int]:
+        """Per-client share of each class goal (0-goals omitted)."""
+        checked = set(self._checked_classes())
+        return {
+            label: math.ceil(spin.value() / n_clients)
+            for label, spin in self.class_goals.items()
+            if label in checked and spin.value() > 0
+        }
+
     def start_collection(self) -> None:
         if not self._clients or self._collecting:
             return
@@ -336,7 +371,7 @@ class CollectorTab(QWidget):
         per_client = math.ceil(self.target.value() / len(clients))
         total = 0
         for sock, info in clients:
-            info.update(saved=0, visited=0, done=False, in_session=True)
+            info.update(saved=0, visited=0, done=False, in_session=True, class_boxes={})
             msg = {
                 "type": "collect_start",
                 "output_dir": str(pool),
@@ -351,6 +386,7 @@ class CollectorTab(QWidget):
                 "negative_ratio": self.negatives.value(),
                 "settle_ticks": self.settle.value(),
                 "avoid_revisits": self.skip_visited.isChecked(),
+                "class_targets": self._class_targets(len(clients)),
                 "classes": classes,
             }
             sock.sendTextMessage(json.dumps(msg))
@@ -392,6 +428,7 @@ class CollectorTab(QWidget):
         elif msg_type == "collect_progress":
             info["saved"] = data.get("saved", info["saved"])
             info["visited"] = data.get("visited", info["visited"])
+            info["class_boxes"] = data.get("class_boxes", info.get("class_boxes", {}))
             self._update_progress()
             if self._session_name and data.get("file"):
                 self.inspector.on_live_capture(self._session_name, data["file"])
@@ -418,6 +455,14 @@ class CollectorTab(QWidget):
         minutes = (time.monotonic() - getattr(self, "_session_started", time.monotonic())) / 60
         if saved and minutes > 0.05:
             parts.append(f"{saved / minutes:.1f} img/min")
+        # Per-class goal fill, totaled across clients
+        goal_bits = []
+        for label, spin in self.class_goals.items():
+            if spin.value() > 0:
+                total_boxes = sum(i.get("class_boxes", {}).get(label, 0) for i in in_session)
+                goal_bits.append(f"{label.replace('_ore', '')} {total_boxes}/{spin.value()}")
+        if goal_bits:
+            parts.append("  ".join(goal_bits))
         if visited:
             parts.append(f"{visited} ores in history")
         self.progress_label.setText("   ·   ".join(parts))
@@ -457,8 +502,12 @@ class CollectorTab(QWidget):
         if not ok:
             return
         try:
-            ds_dir = collect_io.finalize(name, classes)
-            self.log.append_line(f"[finalized {ds_dir.name}: 80/10/10 split + data.yaml]")
+            ds_dir, removed = collect_io.finalize(name, classes)
+            self.log.append_line(
+                f"[finalized {ds_dir.name}: 80/10/10 split + data.yaml"
+                + (f", {removed} near-duplicate(s) removed" if removed else "")
+                + "]"
+            )
             if merge != targets[0]:
                 copied = collect_io.merge_into(ds_dir, DATASETS_DIR / merge)
                 self.log.append_line(f"[merged {copied} images into {merge}]")

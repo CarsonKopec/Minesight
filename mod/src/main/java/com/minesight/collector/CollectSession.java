@@ -1,12 +1,15 @@
 package com.minesight.collector;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /** Configuration and progress of one dataset-collection session (from collect_start). */
@@ -26,6 +29,12 @@ public class CollectSession {
     /** Skip ores already captured in this world (persistent history). */
     public boolean avoidRevisits = true;
     public List<String> classes = new ArrayList<String>();
+    /**
+     * Optional per-class minimum BOX counts ("collect until gold >= 200").
+     * When non-empty, the session runs until every listed class is satisfied
+     * (the image target still acts as a hard cap).
+     */
+    public Map<String, Integer> classTargets = new HashMap<String, Integer>();
 
     public int saved;
 
@@ -59,6 +68,13 @@ public class CollectSession {
         if (o.has("negative_ratio")) negativeRatio = o.get("negative_ratio").getAsDouble();
         if (o.has("settle_ticks")) settleTicks = o.get("settle_ticks").getAsInt();
         if (o.has("avoid_revisits")) avoidRevisits = o.get("avoid_revisits").getAsBoolean();
+        if (o.has("class_targets")) {
+            classTargets.clear();
+            for (Map.Entry<String, JsonElement> e : o.getAsJsonObject("class_targets").entrySet()) {
+                int n = e.getValue().getAsInt();
+                if (n > 0) classTargets.put(e.getKey(), n);
+            }
+        }
     }
 
     public int classIndex(String label) {

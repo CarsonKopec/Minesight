@@ -76,6 +76,17 @@ class EngineTab(QWidget):
         self.device.addItem("GPU 0 (RTX 4060 Ti)", "0")
         self.device.addItem("CPU only (slow)", "cpu")
         row2.addWidget(self.device)
+        self.tracking = QCheckBox("Stable IDs")
+        self.tracking.setChecked(True)
+        self.tracking.setToolTip(
+            "Track objects across frames (ByteTrack) so each ore keeps one ID -\n"
+            "steadier, flicker-free overlays. Phase 2 of the spec."
+        )
+        row2.addWidget(self.tracking)
+        self.fp16 = QCheckBox("FP16")
+        self.fp16.setChecked(True)
+        self.fp16.setToolTip("Half-precision inference: ~1.5-2x faster on RTX GPUs, same accuracy.")
+        row2.addWidget(self.fp16)
         row2.addStretch(1)
         self.start_btn = QPushButton("▶ Start engine")
         self.start_btn.clicked.connect(self.start_engine)
@@ -116,6 +127,8 @@ class EngineTab(QWidget):
         idx = self.device.findData(s.value("engine/device", "auto"))
         if idx >= 0:
             self.device.setCurrentIndex(idx)
+        self.tracking.setChecked(s.value("engine/track", True, type=bool))
+        self.fp16.setChecked(s.value("engine/half", True, type=bool))
         saved_weights = s.value("engine/weights", "")
         if saved_weights and self.weights.findData(saved_weights) >= 0:
             self.set_weights(saved_weights)
@@ -126,6 +139,8 @@ class EngineTab(QWidget):
         s.setValue("engine/conf", self.conf.value())
         s.setValue("engine/device", self.device.currentData())
         s.setValue("engine/weights", self.weights.currentData() or "")
+        s.setValue("engine/track", self.tracking.isChecked())
+        s.setValue("engine/half", self.fp16.isChecked())
 
     # --- weights selection -------------------------------------------------
 
@@ -168,6 +183,10 @@ class EngineTab(QWidget):
         ]
         if self.device.currentData() != "auto":
             args += ["--device", str(self.device.currentData())]
+        if not self.tracking.isChecked():
+            args.append("--no-track")
+        if self.fp16.isChecked() and self.device.currentData() != "cpu":
+            args.append("--half")
         self.log.append_line(f"$ python {' '.join(args[1:])}")
         self.proc.start(PYTHON, args, str(ENGINE_DIR))
         self._ws_retry.start()

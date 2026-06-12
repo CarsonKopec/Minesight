@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import time
 
+from pathlib import Path
+
 from PySide6.QtCore import QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -18,6 +22,9 @@ from PySide6.QtWidgets import (
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+from .constants import ENGINE_DIR, PYTHON
+from .gallery import ZoomView
+from .procs import ManagedProcess
 from .runs import RunInfo, scan_runs
 
 
@@ -46,7 +53,17 @@ class ModelsTab(QWidget):
 
         self.fig = Figure(figsize=(5, 3), tight_layout=True)
         self.canvas = FigureCanvas(self.fig)
-        split.addWidget(self.canvas)
+        detail_tabs = QTabWidget()
+        detail_tabs.addTab(self.canvas, "📈 Curves")
+        self.cm_view = ZoomView()
+        detail_tabs.addTab(self.cm_view, "🔀 Confusion matrix")
+        self.val_view = ZoomView()
+        detail_tabs.addTab(self.val_view, "🖼 Val predictions")
+        detail_tabs.setToolTip(
+            "Confusion matrix: which classes get mistaken for which (and for background).\n"
+            "Val predictions: the model's boxes drawn on a validation batch."
+        )
+        split.addWidget(detail_tabs)
         split.setSizes([300, 320])
 
         btns = QHBoxLayout()
@@ -56,11 +73,23 @@ class ModelsTab(QWidget):
         open_btn = QPushButton("Open run folder")
         open_btn.clicked.connect(self._open_selected)
         btns.addWidget(open_btn)
+        self.export_btn = QPushButton("📤 Export ONNX")
+        self.export_btn.setToolTip(
+            "Convert the selected model to ONNX (best.onnx next to best.pt) -\n"
+            "a portable format for deployment outside Python/PyTorch."
+        )
+        self.export_btn.clicked.connect(self._export_selected)
+        btns.addWidget(self.export_btn)
         refresh = QPushButton("⟳ Refresh")
         refresh.clicked.connect(self.refresh)
         btns.addWidget(refresh)
+        self.export_status = QLabel("")
+        btns.addWidget(self.export_status)
         btns.addStretch(1)
         layout.addLayout(btns)
+
+        self._export_proc = ManagedProcess(self)
+        self._export_proc.finished.connect(self._export_finished)
 
         # Live-updating while a training run writes results.csv
         self._timer = QTimer(self, interval=15000)
@@ -99,8 +128,34 @@ class ModelsTab(QWidget):
         elif self._runs:
             self.table.selectRow(0)
 
+    @staticmethod
+    def _load_artifact(view: ZoomView, path: Path | None) -> None:
+        scene = view.scene()
+        scene.clear()
+        if path is not None and path.exists():
+            pix = QPixmap(str(path))
+            if not pix.isNull():
+                scene.addPixmap(pix)
+        scene.setSceneRect(scene.itemsBoundingRect())
+        view.fit()
+
     def _plot_selected(self) -> None:
         run = self.selected()
+        # Run artifacts saved by ultralytics during training/validation
+        cm = None
+        val = None
+        if run:
+            for name in ("confusion_matrix_normalized.png", "confusion_matrix.png"):
+                if (run.run_dir / name).exists():
+                    cm = run.run_dir / name
+                    break
+            for name in ("val_batch0_pred.jpg", "val_batch1_pred.jpg"):
+                if (run.run_dir / name).exists():
+                    val = run.run_dir / name
+                    break
+        self._load_artifact(self.cm_view, cm)
+        self._load_artifact(self.val_view, val)
+
         self.fig.clear()
         if not run or not run.history:
             self.canvas.draw_idle()
@@ -139,3 +194,24 @@ class ModelsTab(QWidget):
         run = self.selected()
         if run:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(run.run_dir)))
+
+    def _export_selected(self) -> None:
+        run = self.selected()
+        if not run or not run.best or self._export_proc.running:
+            return
+        code = (
+            "from ultralytics import YOLO; "
+            f"YOLO(r'{run.best}').export(format='onnx', imgsz=640, simplify=True)"
+        )
+        self._export_proc.start(PYTHON, ["-c", code], str(ENGINE_DIR))
+        self.export_btn.setEnabled(False)
+        self.export_status.setText(f"exporting {run.name}…")
+
+    def _export_finished(self, code: int) -> None:
+        self.export_btn.setEnabled(True)
+        run = self.selected()
+        onnx = run.best.with_suffix(".onnx") if run and run.best else None
+        if code == 0 and onnx is not None and onnx.exists():
+            self.export_status.setText(f"✓ exported: {onnx.name} (in the run's weights folder)")
+        else:
+            self.export_status.setText(f"✗ export failed (exit {code})")

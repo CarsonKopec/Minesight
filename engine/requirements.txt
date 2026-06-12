@@ -1,6 +1,7 @@
 # NOTE: install CUDA-enabled PyTorch FIRST, or ultralytics will pull the CPU build:
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 ultralytics>=8.4.0
+lap>=0.5          # linear assignment for ByteTrack tracking
 opencv-python>=4.9
 mss>=9.0
 websockets>=13

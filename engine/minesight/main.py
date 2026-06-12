@@ -68,7 +68,7 @@ def _pipeline(cfg: Config, server: DetectionServer, loop, stop: threading.Event)
 
 def _pipeline_loop(cfg: Config, server: DetectionServer, loop, stop: threading.Event) -> None:
     capture = WindowCapture(cfg.window_title, cfg.monitor)
-    detector = Detector(cfg.weights, cfg.imgsz, cfg.conf, cfg.device)
+    detector = Detector(cfg.weights, cfg.imgsz, cfg.conf, cfg.device, cfg.track, cfg.half)
 
     frames = 0
     t0 = time.monotonic()

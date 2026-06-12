@@ -91,6 +91,7 @@ public class CaptureHandler {
 
         List<float[]> boxes = new ArrayList<float[]>();
         List<BlockPos> boxedOres = new ArrayList<BlockPos>();
+        List<String> boxedLabels = new ArrayList<String>();
         for (BlockPos ore : controller.scannedOres()) {
             if (ore.distanceSq(mc.thePlayer.getPosition()) > 16 * 16) continue;
             String label = OreScanner.labelFor(mc.theWorld.getBlockState(ore).getBlock());
@@ -109,6 +110,7 @@ public class CaptureHandler {
                     (box[3] - box[1]) / height,       // h
             });
             boxedOres.add(ore);
+            boxedLabels.add(label);
         }
 
         ByteBuffer pixels = BufferUtils.createByteBuffer(width * height * 4);
@@ -123,7 +125,7 @@ public class CaptureHandler {
             return;
         }
 
-        controller.onCaptured(pixels, width, height, boxes, boxedOres);
+        controller.onCaptured(pixels, width, height, boxes, boxedOres, boxedLabels);
     }
 
     /** Screen position {x, y, depth} of a camera-relative point, or null. */

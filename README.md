@@ -158,7 +158,9 @@ iron tan, coal gray, copper orange (matched by substring of the class label).
 ## Roadmap (from the spec)
 
 - [x] **Phase 1 — Basic detection**: capture → YOLO26s → WebSocket → 2D boxes
-- [ ] **Phase 2 — Stability**: SORT/DeepSORT tracking, overlay polish, perf
+- [x] **Phase 2 — Stability**: persistent object IDs via ByteTrack (the modern
+  SORT successor, ultralytics-native; `--no-track` to disable), FP16 inference
+  (`--half`, ~1.5–2× faster on RTX), overlay holds last state between updates
 - [ ] **Phase 3 — Intelligence**: memory system, vein clustering, prioritization
 - [ ] **Phase 4 — 3D awareness**: screen-to-world mapping, world-space markers
 - [ ] **Phase 5 — Advanced**: radar/minimap, prediction, action suggestions
