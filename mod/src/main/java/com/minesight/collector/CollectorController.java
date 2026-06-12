@@ -170,6 +170,8 @@ public class CollectorController {
         shotsAtSpot = 0;
         sessionClassCounts.clear();
         barrenRegions.clear();
+        controlEnvironment();
+        sendLog("Weather cleared and daytime enforced for clean captures.");
         visited.load(mc.getIntegratedServer().getFolderName());
         state = State.NEXT_TARGET;
         sendLog("Collection started: target " + s.target + " images, classes " + s.classes
@@ -287,6 +289,7 @@ public class CollectorController {
         }
         shotsAtSpot = 0;
         dryAttempts++;
+        controlEnvironment();
         // With visited-ore skipping, an area eventually taps out; migrate the
         // search center to fresh terrain instead of grinding it forever.
         if (dryAttempts > 0 && dryAttempts % RELOCATE_AFTER_DRY_ATTEMPTS == 0) {
@@ -345,6 +348,27 @@ public class CollectorController {
         long key = regionKey(mc.thePlayer.getPosition().getX(), mc.thePlayer.getPosition().getZ());
         Integer n = barrenRegions.get(key);
         barrenRegions.put(key, n == null ? 1 : n + 1);
+    }
+
+    /**
+     * Rain streaks ruin frames and night makes surface shots unusably dark;
+     * brightness variety comes from the gamma randomization instead. Re-run
+     * regularly because weather and time march on during long sessions.
+     */
+    private void controlEnvironment() {
+        if (mc.getIntegratedServer() == null) return;
+        net.minecraft.world.WorldServer world = mc.getIntegratedServer().worldServers[0];
+        if (world == null) return;
+        if (world.getWorldInfo().isRaining() || world.getWorldInfo().isThundering()) {
+            world.getWorldInfo().setRaining(false);
+            world.getWorldInfo().setThundering(false);
+            world.getWorldInfo().setRainTime(20 * 60 * 60);     // dry for an hour
+            world.getWorldInfo().setThunderTime(20 * 60 * 60);
+        }
+        long dayTime = world.getWorldTime() % 24000L;
+        if (dayTime > 11000L) {  // dusk or later - skip to morning
+            world.setWorldTime(world.getWorldTime() - dayTime + 24000L + 1000L);
+        }
     }
 
     /**

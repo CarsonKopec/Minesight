@@ -89,6 +89,18 @@ public class CaptureHandler {
                 mc.thePlayer.posY + mc.thePlayer.getEyeHeight(),
                 mc.thePlayer.posZ);
 
+        ByteBuffer pixels = BufferUtils.createByteBuffer(width * height * 4);
+        GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);
+        GL11.glReadPixels(0, 0, width, height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
+
+        // Don't save frames the renderer hasn't actually drawn yet (or that
+        // are too dark/featureless to be useful training data).
+        String reject = FrameQuality.evaluate(pixels, width, height);
+        if (reject != null) {
+            controller.onCaptureRejected(reject);
+            return;
+        }
+
         List<float[]> boxes = new ArrayList<float[]>();
         List<BlockPos> boxedOres = new ArrayList<BlockPos>();
         List<String> boxedLabels = new ArrayList<String>();
@@ -102,6 +114,9 @@ public class CaptureHandler {
 
             float[] box = projectBlock(ore, camX, camY, camZ, width, height);
             if (box == null) continue;
+            // World data says visible, but do the PIXELS actually show it?
+            // Unrendered chunks (box on sky/fog) and pitch darkness fail here.
+            if (!boxLooksVisible(pixels, width, height, box)) continue;
             boxes.add(new float[]{
                     cls,
                     (box[0] + box[2]) / 2f / width,   // cx
@@ -113,19 +128,46 @@ public class CaptureHandler {
             boxedLabels.add(label);
         }
 
-        ByteBuffer pixels = BufferUtils.createByteBuffer(width * height * 4);
-        GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);
-        GL11.glReadPixels(0, 0, width, height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
-
-        // Don't save frames the renderer hasn't actually drawn yet (or that
-        // are too dark/featureless to be useful training data).
-        String reject = FrameQuality.evaluate(pixels, width, height);
-        if (reject != null) {
-            controller.onCaptureRejected(reject);
+        if (boxes.isEmpty() && !controller.wantsNegative()) {
+            // Nothing passed the pixel check; retry (a gamma reroll often
+            // rescues dim shots) or give up on this spot after a few tries.
+            controller.onCaptureRejected("no clearly visible ore in the pixels");
             return;
         }
 
         controller.onCaptured(pixels, width, height, boxes, boxedOres, boxedLabels);
+    }
+
+    /**
+     * Samples the pixels inside a projected box: the region must be bright
+     * enough to see and textured enough to be an ore, not sky/fog/darkness.
+     */
+    private static boolean boxLooksVisible(ByteBuffer rgba, int imgW, int imgH, float[] box) {
+        int x0 = Math.max(0, (int) box[0]);
+        int y0 = Math.max(0, (int) box[1]);
+        int x1 = Math.min(imgW - 1, (int) box[2]);
+        int y1 = Math.min(imgH - 1, (int) box[3]);
+        int stepX = Math.max(1, (x1 - x0) / 20);
+        int stepY = Math.max(1, (y1 - y0) / 20);
+        double sum = 0;
+        double sumSq = 0;
+        int n = 0;
+        for (int y = y0; y <= y1; y += stepY) {
+            int row = imgH - 1 - y;  // GL buffer rows are bottom-up
+            for (int x = x0; x <= x1; x += stepX) {
+                int i = (row * imgW + x) * 4;
+                double luma = 0.299 * (rgba.get(i) & 0xFF)
+                        + 0.587 * (rgba.get(i + 1) & 0xFF)
+                        + 0.114 * (rgba.get(i + 2) & 0xFF);
+                sum += luma;
+                sumSq += luma * luma;
+                n++;
+            }
+        }
+        if (n < 4) return false;
+        double mean = sum / n;
+        double std = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
+        return mean >= 8.0 && std >= 3.5;
     }
 
     /** Screen position {x, y, depth} of a camera-relative point, or null. */
