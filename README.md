@@ -56,12 +56,28 @@ python -m minesight_gui        # or double-click MineSight-GUI.bat
   remembered per world so veins are never photographed twice, and **multiple game
   clients can collect in parallel** (one world each — the target is split across
   them). Great for the rare stone-variant ores the Roboflow data lacks.
-- **Multi-PC farms** — tick *Allow LAN clients* in the Collector tab and other
-  computers can join: install the mod there and add the JVM arguments
-  `-Dminesight.collector=ws://<host-ip>:8766` (plus optionally
-  `-Dminesight.autoworld=FarmWorld1`) to the launcher profile. Remote captures
-  are streamed back over the WebSocket into the same pool; the target and
-  class goals are split across every connected client, local or remote.
+- **Multi-PC farms** — tick *Allow LAN clients* in the Collector tab (the
+  status line shows the `ws://<ip>:8766` address) and other computers can join.
+  Remote captures are streamed back over the WebSocket into the same pool;
+  targets and class goals are split across every connected client, local or
+  remote. On each remote PC, use the **Farm Agent** (below) — or any installed
+  mod ≥0.8.1 with `-Dminesight.collector=ws://<host-ip>:8766` as a JVM arg, or
+  a `minesight-collector.txt` file containing that address in the game folder.
+
+### Farm Agent (remote machines)
+
+The remote-PC counterpart to the Control Panel: a small window that launches
+sandboxed game clients pointed at your host. Setup on the remote PC:
+
+1. Copy/clone this repo, install Python 3.10+ and a JDK 17+
+2. `pip install PySide6 psutil`
+3. Double-click `MineSight-Farm.bat` (or `python -m minesight_gui.farm_agent`
+   from `engine\`)
+4. Enter the host address from your Collector tab, pick a client count, Launch
+
+The first launch downloads Minecraft/Forge/JDK 8 via Gradle (several minutes);
+afterwards it's instant. Clients appear in the host's Collector tab marked 🌐,
+and the session is controlled entirely from the host.
 - **Clients tab** — embeds running game windows as tabs inside the Control Panel
   (no floating windows). Farm clients launched from the Mod tab auto-embed;
   manually launched games embed on request and can be released back to the

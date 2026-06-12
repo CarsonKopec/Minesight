@@ -86,7 +86,12 @@ tasks.withType(org.gradle.jvm.tasks.Jar::class) {
 }
 
 tasks.named<JavaExec>("runClient") {
-    executable = "C:\\Users\\kopec\\.gradle\\jdks\\temurin-8-amd64-windows\\jdk8u492-b09\\bin\\java.exe"
+    // Pinned JDK 8 for this machine; other machines (remote farm workers)
+    // fall back to the toolchain default when the path doesn't exist.
+    val pinnedJava = file("C:\\Users\\kopec\\.gradle\\jdks\\temurin-8-amd64-windows\\jdk8u492-b09\\bin\\java.exe")
+    if (pinnedJava.exists()) {
+        executable = pinnedJava.absolutePath
+    }
 }
 
 tasks.processResources {
