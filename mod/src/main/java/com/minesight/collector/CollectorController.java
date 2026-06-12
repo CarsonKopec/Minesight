@@ -49,7 +49,12 @@ public class CollectorController {
     private int settleNeeded;
     private int captureRetries;
     private static final int MAX_CAPTURE_RETRIES = 8;
-    private static final int MAX_SHOTS_PER_SPOT = 4;
+    /**
+     * Safety bound only: shooting at a spot ends naturally once every nearby
+     * ore is marked visited, so a rich cave gets photographed exhaustively
+     * before the collector teleports away.
+     */
+    private static final int MAX_SHOTS_PER_SPOT = 25;
     private static final int RELOCATE_AFTER_DRY_ATTEMPTS = 30;
 
     private int shotsAtSpot;
@@ -577,6 +582,12 @@ public class CollectorController {
             sendLog("Skipped a spot after " + MAX_CAPTURE_RETRIES + " bad frames (" + reason + ")");
             state = State.NEXT_TARGET;
         } else {
+            // The jitter is rolled once per shot; an unlucky draw can push the
+            // target outside the aim gate on EVERY retry ("staring" at an ore
+            // without ever shooting). Decay toward dead-center so retries
+            // converge on a guaranteed-valid aim.
+            jitterYaw *= 0.4f;
+            jitterPitch *= 0.4f;
             beginSettle(5);
         }
     }
