@@ -21,6 +21,7 @@ mod/run/
 mod/run-client*/
 
 # IDE
+.claude/
 .idea/
 .vscode/
 *.iml
