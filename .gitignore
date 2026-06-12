@@ -1,0 +1,26 @@
+# Python
+engine/.venv/
+__pycache__/
+*.pyc
+
+# Model weights & training output
+*.pt
+engine/minesight_runs/
+engine/runs/
+
+# Datasets & logs (gigabytes, regenerable via Roboflow export + the collector)
+engine/datasets/
+engine/*.log
+engine/*.err
+
+# Mod build output (mod/.gitignore also covers these)
+mod/build/
+mod/.gradle/
+mod/.gradle-client*/
+mod/run/
+mod/run-client*/
+
+# IDE
+.idea/
+.vscode/
+*.iml

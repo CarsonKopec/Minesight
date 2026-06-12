@@ -1,0 +1,255 @@
+--- PAGE 1 ---
+MineSight: Vision-Augmented Minecraft
+System
+Updated Technical Specification — June 2026
+Overview
+MineSight is a real-time AI-powered perception system for Minecraft. It separates responsibilities between a
+lightweight client-side mod and an external Python-based machine learning engine. The system detects ores
+and other objects using computer vision and overlays that information back into the game, with support for
+tracking, memory, and optional 3D world mapping.
+Core Concept
+(cid:127) The Minecraft mod does not perform detection
+(cid:127) The Python backend performs all ML inference
+(cid:127) Communication is handled via WebSockets
+(cid:127) The system operates in real-time
+Architecture
+1. Minecraft Client Mod (Forge 1.8.9)
+Responsibilities:
+(cid:127) Send player state (position, rotation, FOV)
+(cid:127) Maintain WebSocket connection to Python backend
+(cid:127) Receive detection results
+(cid:127) Render overlays (2D and optionally 3D)
+Does NOT:
+(cid:127) Perform any ore detection
+(cid:127) Scan chunks for ores
+2. Python ML Engine
+Responsibilities:
+(cid:127) Capture screen (Minecraft window)
+(cid:127) Run object detection (YOLO26s)
+(cid:127) Track detected objects across frames
+(cid:127) Send detection results back to mod
+Optional:
+(cid:127) Maintain memory of detected objects
+(cid:127) Predict object locations
+--- PAGE 2 ---
+(cid:127) Cluster detections into groups (e.g., ore veins)
+3. Communication Layer (WebSocket)
+(cid:127) Persistent, bidirectional connection
+(cid:127) JSON-based protocol
+(cid:127) Low-latency messaging
+ML System (Python)
+Model
+H UPDATED: Model upgraded from YOLO (generic) to YOLO26s
+H UPDATED: Hardware target: NVIDIA RTX 4060 Ti (personal use, single machine)
+Variant Use Case Status
+YOLO26n (nano) Low-end hardware / CPU-only Fallback option
+YOLO26s (small) RTX 4060 Ti — PRIMARY TARGET Selected
+YOLO26m (medium) High-end GPU, max accuracy Optional upgrade
+Why YOLO26s for This Project
+(cid:127) YOLO26s has enhanced small-object detection via ProgLoss and STAL loss functions — critical for
+small/occluded ores
+(cid:127) NMS-free end-to-end architecture reduces post-processing latency
+(cid:127) RTX 4060 Ti runs YOLO26s at 100+ FPS at 640 resolution — well within the 30 FPS target
+(cid:127) Higher accuracy than nano without meaningful performance cost on target hardware
+(cid:127) Pretrained weights available: yolo26s.pt from Ultralytics assets
+Recommended Stack
+H UPDATED: Python 3.10+ (unchanged)
+(cid:127) PyTorch with CUDA (RTX 4060 Ti — verify with torch.cuda.is_available())
+(cid:127) Ultralytics YOLO26 (pip install ultralytics)
+(cid:127) OpenCV
+(cid:127) mss for screen capture
+(cid:127) websockets for communication
+GPU Verification
+import torch
+print(torch.cuda.is_available()) # Must return True
+print(torch.cuda.get_device_name(0)) # Should show RTX 4060 Ti
+Detection Pipeline
+1. Capture screen frame (mss)
+--- PAGE 3 ---
+2. Run inference — YOLO26s at 640px input resolution
+3. Extract bounding boxes
+4. Assign IDs (tracking)
+5. Send results via WebSocket
+Performance Notes (RTX 4060 Ti)
+H UPDATED: Inference FPS cap from doc (10-30 FPS) is conservative — 4060 Ti can run uncapped
+(cid:127) Run inference at full GPU speed; no artificial FPS limit needed
+(cid:127) Use 640px or 1280px input resolution — both are viable on this hardware
+(cid:127) All optional features (memory, clustering, 3D mapping) can be enabled without hardware concern
+(cid:127) Python backend and Minecraft client run on the same machine simultaneously
+Training Specification
+H UPDATED: This section is new — not present in original spec
+Dataset
+Parameter Value
+Total images 2,524
+Train split ~2,024 (80%)
+Validation split ~250 (10%)
+Test split ~250 (10%)
+Annotation tool Roboflow
+Export format YOLO (auto-generates data.yaml)
+Data Collection Strategy
+(cid:127) Primary source: Roboflow Universe (existing Minecraft ore datasets)
+(cid:127) Supplement with manual screenshots at varied brightness/gamma (cave lighting variance)
+(cid:127) Intentionally oversample rare ores (diamond, emerald) — rarity in-game causes class imbalance
+(cid:127) Include partially occluded ores — fully exposed examples alone will cause real-world failures
+(cid:127) Capture at multiple FOV values (matches FOV field sent in player state messages)
+Roboflow Augmentations (apply before export)
+(cid:127) Brightness/exposure variation — critical for cave vs. surface lighting
+(cid:127) Horizontal flip — free data, ores are symmetrical
+(cid:127) Random crop and zoom — simulates varied viewing distances
+(cid:127) Mosaic augmentation — also supported natively by YOLO26 during training
+Training Command
+from ultralytics import YOLO
+--- PAGE 4 ---
+model = YOLO("yolo26s.pt") # Load pretrained YOLO26s weights
+model.train(
+data="data.yaml", # Exported from Roboflow
+epochs=100,
+imgsz=640,
+batch=16, # Safe for 4060 Ti VRAM
+device=0, # RTX 4060 Ti
+project="minesight",
+name="yolo26s_ores",
+)
+Expected training time on RTX 4060 Ti: ~15-30 minutes for 100 epochs
+Tip: Train both yolo26n and yolo26s, compare mAP on validation set before committing
+Data Flow
+Python fi Mod (detections)
+{
+"type": "detections",
+"objects": [
+{
+"label": "diamond_ore",
+"x": 540,
+"y": 320,
+"w": 40,
+"h": 40,
+"confidence": 0.92,
+"id": 12
+}
+]
+}
+Mod fi Python (player state)
+{
+"type": "player",
+"x": 123,
+"y": 64,
+"z": -20,
+"yaw": 90,
+"pitch": -15,
+"fov": 90
+}
+Rendering System (Mod)
+2D Overlay
+(cid:127) Draw bounding boxes using screen coordinates
+--- PAGE 5 ---
+(cid:127) Use RenderGameOverlayEvent
+(cid:127) Color-code based on object type or confidence
+3D Overlay (Advanced)
+(cid:127) Convert screen-space detections to world-space
+(cid:127) Use ray projection from camera
+(cid:127) Render boxes in world using RenderWorldLastEvent
+(cid:127) Note: ray projection depth estimation is noisy — expect positional error, especially at angles
+Object Tracking
+Enhance detections with tracking:
+(cid:127) Assign persistent IDs to objects
+(cid:127) SORT — lightweight, good baseline
+(cid:127) DeepSORT — better re-identification after occlusion
+Note: SORT/DeepSORT expect consistent frame rates. If inference runs slower than game render rate, the mod should
+hold the last known detection state between updates.
+Benefits:
+(cid:127) Stable overlays
+(cid:127) Reduced flickering
+(cid:127) Enables prediction
+Memory System (Optional)
+Store detected objects across frames:
+{
+"ore_nodes": [
+{
+"x": 120,
+"y": 11,
+"z": -45,
+"confidence": 0.92,
+"last_seen": 123456789
+}
+]
+}
+Capabilities:
+(cid:127) Persistent ore locations
+(cid:127) Rediscovery after occlusion
+(cid:127) Heatmaps / density maps
+Screen to World Mapping (Advanced)
+--- PAGE 6 ---
+Goal: Convert 2D detections into 3D world coordinates
+Inputs:
+(cid:127) Player position
+(cid:127) Camera rotation (yaw, pitch)
+(cid:127) Field of view (FOV)
+(cid:127) Screen resolution
+Method:
+1. Normalize screen coordinates
+2. Convert to camera space ray
+3. Apply rotation transforms
+4. Raycast into world
+Output: Approximate 3D position of detected object
+This is the most complex component. Depth estimation from 2D bounding box centers introduces real-world error. Flag
+this in implementation and iterate.
+Performance Considerations
+Python (RTX 4060 Ti — updated)
+H UPDATED: Original doc recommended limiting to 10-30 FPS. Not needed on target hardware.
+(cid:127) Run inference at full GPU speed — no artificial cap needed on 4060 Ti
+(cid:127) Use 640px or 1280px input resolution
+(cid:127) GPU acceleration via CUDA — always enabled on target machine
+Mod
+(cid:127) Avoid heavy logic in render loop
+(cid:127) Cache detections per frame
+(cid:127) Batch rendering calls
+Network
+(cid:127) Keep messages lightweight
+(cid:127) Avoid sending images over WebSocket
+(cid:127) Use JSON or compact binary format
+Optional Features
+Minimap / Radar
+(cid:127) Top-down visualization of detected ores
+(cid:127) Directional indicators
+Prediction Layer
+--- PAGE 7 ---
+(cid:127) Predict likely ore locations using ML
+(cid:127) Based on patterns (depth, biome, etc.)
+Action Suggestions
+{
+"type": "suggestion",
+"action": "turn_left",
+"reason": "diamond detected"
+}
+Alerts
+(cid:127) Sound or visual alerts for rare ores
+(cid:127) Priority highlighting
+Development Roadmap
+Phase 1: Basic Detection
+(cid:127) Python captures screen
+(cid:127) Runs YOLO26s inference
+(cid:127) Sends detections
+(cid:127) Mod renders 2D boxes
+Phase 2: Stability
+(cid:127) Add object tracking (SORT or DeepSORT)
+(cid:127) Improve overlay rendering
+(cid:127) Optimize performance
+Phase 3: Intelligence
+(cid:127) Add memory system
+(cid:127) Implement clustering (veins)
+(cid:127) Add prioritization
+Phase 4: 3D Awareness
+(cid:127) Implement screen to world mapping
+(cid:127) Render 3D markers
+Phase 5: Advanced Features
+(cid:127) Radar/minimap
+(cid:127) Prediction models
+(cid:127) Action suggestions
+--- PAGE 8 ---
+Notes
+(cid:127) Designed for singleplayer — personal use on a single machine
+(cid:127) Multiplayer servers may restrict or ban modified clients regardless of overlay-only approach
+(cid:127) ML accuracy depends heavily on training data quality and class balance
+(cid:127) YOLO26s pretrained weights: https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt
+Goal: Build a real-time perception system that augments Minecraft gameplay with AI-driven insights, bridging computer
+vision and 3D world interaction.

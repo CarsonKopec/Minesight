@@ -1,0 +1,14 @@
+# NOTE: install CUDA-enabled PyTorch FIRST, or ultralytics will pull the CPU build:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+ultralytics>=8.4.0
+opencv-python>=4.9
+mss>=9.0
+websockets>=13
+numpy
+pywin32>=306; sys_platform == "win32"
+psutil
+
+# Control panel GUI (python -m minesight_gui)
+PySide6>=6.7
+nvidia-ml-py
+

@@ -1,0 +1,18 @@
+[
+  {
+    "modid": "${modid}",
+    "name": "MineSight",
+    "description": "Vision-augmented Minecraft: renders real-time ore detections streamed from the MineSight Python ML engine.",
+    "version": "${version}",
+    "mcversion": "${mcversion}",
+    "url": "",
+    "updateUrl": "",
+    "authorList": [
+      "kopec"
+    ],
+    "credits": "",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]
