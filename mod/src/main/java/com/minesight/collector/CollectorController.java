@@ -149,7 +149,7 @@ public class CollectorController {
             sendDone(0, "error", "No classes selected.");
             return;
         }
-        if (!writer.prepare(s.outputDir)) {
+        if (!writer.prepare(s.outputDir, s.upload)) {
             sendDone(0, "error", "Cannot create output directory: " + s.outputDir);
             return;
         }
@@ -614,51 +614,88 @@ public class CollectorController {
             return;
         }
         state = State.SAVING;
-        writer.saveAsync(rgba, width, height, boxes, new DatasetWriter.Callback() {
-            @Override
-            public void onSaved(final String fileName, final int boxCount, final String thumbB64) {
-                mc.addScheduledTask(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (session == null) return;
-                        session.saved++;
-                        dryAttempts = 0;
-                        shotsAtSpot++;
-                        // Count every saved BOX per class (a 6-block vein = 6).
-                        for (String label : boxedLabels) {
-                            Integer c = sessionClassCounts.get(label);
-                            sessionClassCounts.put(label, c == null ? 1 : c + 1);
+        if (session.upload) {
+            // Remote client: the image travels to the Control Panel over WS.
+            writer.uploadAsync(rgba, width, height, boxes, new DatasetWriter.UploadCallback() {
+                @Override
+                public void onReady(final String fileName, final String pngB64, final String labels,
+                                    final int boxCount, final String thumbB64) {
+                    mc.addScheduledTask(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (session == null) return;
+                            JsonObject img = new JsonObject();
+                            img.addProperty("type", "collect_image");
+                            img.addProperty("file", fileName);
+                            img.addProperty("png", pngB64);
+                            img.addProperty("labels", labels);
+                            if (socket != null) socket.send(img);
+                            afterSaved(fileName, boxCount, thumbB64, boxedOres, boxedLabels);
                         }
-                        // Everything boxed in this image counts as photographed.
-                        for (BlockPos p : boxedOres) {
-                            visited.add(p);
-                        }
-                        if (session.saved % 20 == 0) {
-                            visited.saveIfDirty();
-                        }
-                        sendProgress(fileName, boxCount, thumbB64);
-                        if (session.saved >= session.target || classTargetsMet()) {
-                            finish("target");
-                        } else if (shotsAtSpot < MAX_SHOTS_PER_SPOT) {
-                            // This cave system probably has more unvisited ore;
-                            // rescan from here and amortize the teleport+settle.
-                            state = State.SCAN;
-                        } else {
-                            state = State.NEXT_TARGET;
-                        }
-                    }
-                });
-            }
+                    });
+                }
 
+                @Override
+                public void onError(final String message) {
+                    onSaveError(message);
+                }
+            });
+        } else {
+            writer.saveAsync(rgba, width, height, boxes, new DatasetWriter.Callback() {
+                @Override
+                public void onSaved(final String fileName, final int boxCount, final String thumbB64) {
+                    mc.addScheduledTask(new Runnable() {
+                        @Override
+                        public void run() {
+                            afterSaved(fileName, boxCount, thumbB64, boxedOres, boxedLabels);
+                        }
+                    });
+                }
+
+                @Override
+                public void onError(final String message) {
+                    onSaveError(message);
+                }
+            });
+        }
+    }
+
+    private void afterSaved(String fileName, int boxCount, String thumbB64,
+                            List<BlockPos> boxedOres, List<String> boxedLabels) {
+        if (session == null) return;
+        session.saved++;
+        dryAttempts = 0;
+        shotsAtSpot++;
+        // Count every saved BOX per class (a 6-block vein = 6).
+        for (String label : boxedLabels) {
+            Integer c = sessionClassCounts.get(label);
+            sessionClassCounts.put(label, c == null ? 1 : c + 1);
+        }
+        // Everything boxed in this image counts as photographed.
+        for (BlockPos p : boxedOres) {
+            visited.add(p);
+        }
+        if (session.saved % 20 == 0) {
+            visited.saveIfDirty();
+        }
+        sendProgress(fileName, boxCount, thumbB64);
+        if (session.saved >= session.target || classTargetsMet()) {
+            finish("target");
+        } else if (shotsAtSpot < MAX_SHOTS_PER_SPOT) {
+            // This cave system probably has more unvisited ore;
+            // rescan from here and amortize the teleport+settle.
+            state = State.SCAN;
+        } else {
+            state = State.NEXT_TARGET;
+        }
+    }
+
+    private void onSaveError(final String message) {
+        mc.addScheduledTask(new Runnable() {
             @Override
-            public void onError(final String message) {
-                mc.addScheduledTask(new Runnable() {
-                    @Override
-                    public void run() {
-                        sendLog("Save failed: " + message);
-                        if (session != null) state = State.NEXT_TARGET;
-                    }
-                });
+            public void run() {
+                sendLog("Save failed: " + message);
+                if (session != null) state = State.NEXT_TARGET;
             }
         });
     }

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 import math
+import socket as _socket
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtNetwork import QHostAddress
@@ -65,13 +68,25 @@ class CollectorTab(QWidget):
         self.server = QWebSocketServer(
             "MineSight Collector", QWebSocketServer.SslMode.NonSecureMode, self
         )
-        listening = self.server.listen(QHostAddress.SpecialAddress.LocalHost, COLLECTOR_PORT)
         self.server.newConnection.connect(self._on_connection)
 
         layout = QVBoxLayout(self)
 
+        status_row = QHBoxLayout()
         self.conn_status = QLabel()
-        layout.addWidget(self.conn_status)
+        status_row.addWidget(self.conn_status, 1)
+        self.lan_check = QCheckBox("Allow LAN clients")
+        self.lan_check.setToolTip(
+            "Let Minecraft clients on OTHER computers join the farm.\n"
+            "On the remote PC, add these JVM arguments to the launcher profile:\n"
+            f"  -Dminesight.collector=ws://<this-pc-ip>:{COLLECTOR_PORT}\n"
+            "  -Dminesight.autoworld=FarmWorld1   (optional auto-world)\n"
+            "Remote captures are streamed back here into the same pool.\n"
+            "Windows Firewall will ask once - allow it on private networks."
+        )
+        self.lan_check.toggled.connect(self._relisten)
+        status_row.addWidget(self.lan_check)
+        layout.addLayout(status_row)
 
         form_box = QGroupBox("Session settings")
         grid = QGridLayout(form_box)
@@ -231,15 +246,11 @@ class CollectorTab(QWidget):
         body.setSizes([450, 130])
         layout.addWidget(body, 1)
 
-        if listening:
-            self._update_conn_status()
-        else:
-            self.conn_status.setText(
-                f"❌ Could not listen on port {COLLECTOR_PORT} - is another Control Panel open?"
-            )
-            self.start_btn.setEnabled(False)
-
         self._load_settings()
+        self.lan_check.setChecked(
+            QSettings("MineSight", "ControlPanel").value("collector/lan", False, type=bool)
+        )
+        self._relisten()
 
     # --- settings persistence --------------------------------------------------
 
@@ -313,28 +324,66 @@ class CollectorTab(QWidget):
 
     # --- connection handling -------------------------------------------------
 
+    @staticmethod
+    def _lan_ip() -> str:
+        try:
+            s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "<this-pc-ip>"
+
+    def _relisten(self) -> None:
+        QSettings("MineSight", "ControlPanel").setValue("collector/lan", self.lan_check.isChecked())
+        self.server.close()
+        addr = (
+            QHostAddress.SpecialAddress.Any
+            if self.lan_check.isChecked()
+            else QHostAddress.SpecialAddress.LocalHost
+        )
+        if not self.server.listen(addr, COLLECTOR_PORT):
+            self.conn_status.setText(
+                f"❌ Could not listen on port {COLLECTOR_PORT} - is another Control Panel open?"
+            )
+            self.start_btn.setEnabled(False)
+            return
+        self._update_conn_status()
+
     def _update_conn_status(self) -> None:
+        lan = f"   |   LAN: ws://{self._lan_ip()}:{COLLECTOR_PORT}" if self.lan_check.isChecked() else ""
         n = len(self._clients)
         if n == 0:
             self.conn_status.setText(
                 "🔌 No game clients connected - launch Minecraft 1.8.9 with MineSight ≥0.4.0 "
-                "and open a singleplayer world (one world per client). They connect automatically."
+                "and open a singleplayer world (one world per client)." + lan
             )
         else:
-            ids = ", ".join(f"#{info['id']}" for info in self._clients.values())
+            ids = ", ".join(
+                f"#{info['id']}" + ("🌐" if info.get("remote") else "")
+                for info in self._clients.values()
+            )
             self.conn_status.setText(
-                f"✅ {n} game client(s) connected ({ids}). The image target is split across all of them."
+                f"✅ {n} game client(s) connected ({ids}). The image target is split across all of them." + lan
             )
         self._update_buttons()
 
     def _on_connection(self) -> None:
         sock = self.server.nextPendingConnection()
-        info = {"id": self._next_client_id, "saved": 0, "visited": 0, "done": False, "in_session": False}
+        # Remote captures arrive as multi-MB base64 PNGs
+        sock.setMaxAllowedIncomingMessageSize(64 * 1024 * 1024)
+        remote = not sock.peerAddress().isLoopback()
+        info = {
+            "id": self._next_client_id, "saved": 0, "visited": 0,
+            "done": False, "in_session": False, "remote": remote,
+        }
         self._next_client_id += 1
         self._clients[sock] = info
         sock.textMessageReceived.connect(lambda msg, s=sock: self._on_message(s, msg))
         sock.disconnected.connect(lambda s=sock: self._on_disconnect(s))
-        self.log.append_line(f"[client #{info['id']} connected]")
+        origin = f" from {sock.peerAddress().toString()}" if remote else ""
+        self.log.append_line(f"[client #{info['id']} connected{origin}]")
         self._update_conn_status()
 
     def _on_disconnect(self, sock) -> None:
@@ -443,6 +492,9 @@ class CollectorTab(QWidget):
                 "avoid_revisits": self.skip_visited.isChecked(),
                 "class_targets": self._class_targets(len(clients)),
                 "classes": classes,
+                # Clients on other machines can't write to our disk; they
+                # stream the images back over the socket instead.
+                "upload": bool(info.get("remote")),
             }
             sock.sendTextMessage(json.dumps(msg))
             total += per_client
@@ -488,6 +540,23 @@ class CollectorTab(QWidget):
             if self._session_name and data.get("file"):
                 self.inspector.on_live_capture(self._session_name, data["file"])
             self.log.append_line(f"#{cid} saved {data.get('file')} ({data.get('boxes')} boxes)")
+        elif msg_type == "collect_image":
+            # A remote client streamed a capture; write it into the pool.
+            if not self._session_name:
+                return
+            fname = Path(str(data.get("file", ""))).name
+            if not fname.endswith(".png"):
+                return
+            pool = collect_io.pool_dir(self._session_name)
+            (pool / "images").mkdir(parents=True, exist_ok=True)
+            (pool / "labels").mkdir(parents=True, exist_ok=True)
+            try:
+                (pool / "images" / fname).write_bytes(base64.b64decode(data.get("png", "")))
+                (pool / "labels" / (Path(fname).stem + ".txt")).write_text(
+                    data.get("labels", ""), encoding="utf-8"
+                )
+            except Exception as e:
+                self.log.append_line(f"[#{cid}] failed to store streamed image: {e}")
         elif msg_type == "collect_log":
             self.log.append_line(f"[#{cid}] {data.get('message')}")
         elif msg_type == "collect_done":

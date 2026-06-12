@@ -118,6 +118,13 @@ sessions. `collect_clear_history` wipes it for the open world.
 
 `classes` order defines the label indices the mod writes.
 
+For clients on other machines (the GUI sets `"upload": true` for non-loopback
+connections), captures are streamed instead of written to `output_dir`:
+
+```json
+{"type": "collect_image", "file": "collected_...png", "png": "<base64 PNG>", "labels": "0 0.5 0.5 0.1 0.1\n"}
+```
+
 Mod → GUI:
 
 ```json

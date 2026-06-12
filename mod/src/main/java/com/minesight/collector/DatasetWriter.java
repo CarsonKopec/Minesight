@@ -25,6 +25,13 @@ public class DatasetWriter {
         void onError(String message);
     }
 
+    /** For remote clients: the encoded image travels over the WebSocket. */
+    public interface UploadCallback {
+        void onReady(String fileName, String pngB64, String labels, int boxes, String thumbB64);
+
+        void onError(String message);
+    }
+
     private final ExecutorService exec = Executors.newSingleThreadExecutor(new ThreadFactory() {
         @Override
         public Thread newThread(Runnable r) {
@@ -36,13 +43,18 @@ public class DatasetWriter {
 
     private File imagesDir;
     private File labelsDir;
+    private boolean uploadMode;
     private int counter;
     /** Random per-game-instance token so parallel clients writing into the
      *  same pool can never collide on filenames. */
     private final String instanceToken =
             Integer.toHexString((int) (Math.random() * 0xFFFF) | 0x10000).substring(1);
 
-    public boolean prepare(File outputDir) {
+    public boolean prepare(File outputDir, boolean upload) {
+        uploadMode = upload;
+        if (upload) {
+            return true;  // the Control Panel host writes the files
+        }
         imagesDir = new File(outputDir, "images");
         labelsDir = new File(outputDir, "labels");
         // mkdirs() returns false when the dir already exists, and parallel
@@ -52,32 +64,61 @@ public class DatasetWriter {
         return imagesDir.isDirectory() && labelsDir.isDirectory();
     }
 
+    private String nextName() {
+        return "collected_" + instanceToken + "_" + System.currentTimeMillis() + "_" + counter++;
+    }
+
+    private static String labelText(List<float[]> boxes) {
+        StringBuilder sb = new StringBuilder();
+        for (float[] b : boxes) {
+            sb.append(String.format(Locale.ROOT, "%d %.6f %.6f %.6f %.6f%n",
+                    (int) b[0], b[1], b[2], b[3], b[4]));
+        }
+        return sb.toString();
+    }
+
     /** boxes entries are {classIndex, cx, cy, w, h} normalized to [0,1]. */
     public void saveAsync(final ByteBuffer rgba, final int width, final int height,
                           final List<float[]> boxes, final Callback cb) {
-        final int index = counter++;
+        final String name = nextName();
         exec.submit(new Runnable() {
             @Override
             public void run() {
                 try {
                     BufferedImage img = toImage(rgba, width, height);
-                    String name = "collected_" + instanceToken + "_" + System.currentTimeMillis() + "_" + index;
                     ImageIO.write(img, "png", new File(imagesDir, name + ".png"));
-
-                    StringBuilder sb = new StringBuilder();
-                    for (float[] b : boxes) {
-                        sb.append(String.format(Locale.ROOT, "%d %.6f %.6f %.6f %.6f%n",
-                                (int) b[0], b[1], b[2], b[3], b[4]));
-                    }
                     java.io.FileOutputStream fos =
                             new java.io.FileOutputStream(new File(labelsDir, name + ".txt"));
                     try {
-                        fos.write(sb.toString().getBytes("UTF-8"));
+                        fos.write(labelText(boxes).getBytes("UTF-8"));
                     } finally {
                         fos.close();
                     }
-
                     cb.onSaved(name + ".png", boxes.size(), thumbnail(img, 320));
+                } catch (Exception ex) {
+                    cb.onError(ex.toString());
+                }
+            }
+        });
+    }
+
+    /** Remote variant: encode and hand back base64 instead of touching disk. */
+    public void uploadAsync(final ByteBuffer rgba, final int width, final int height,
+                            final List<float[]> boxes, final UploadCallback cb) {
+        final String name = nextName();
+        exec.submit(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    BufferedImage img = toImage(rgba, width, height);
+                    ByteArrayOutputStream png = new ByteArrayOutputStream();
+                    ImageIO.write(img, "png", png);
+                    cb.onReady(
+                            name + ".png",
+                            Base64.getEncoder().encodeToString(png.toByteArray()),
+                            labelText(boxes),
+                            boxes.size(),
+                            thumbnail(img, 320));
                 } catch (Exception ex) {
                     cb.onError(ex.toString());
                 }

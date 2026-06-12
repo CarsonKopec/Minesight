@@ -56,6 +56,12 @@ python -m minesight_gui        # or double-click MineSight-GUI.bat
   remembered per world so veins are never photographed twice, and **multiple game
   clients can collect in parallel** (one world each — the target is split across
   them). Great for the rare stone-variant ores the Roboflow data lacks.
+- **Multi-PC farms** — tick *Allow LAN clients* in the Collector tab and other
+  computers can join: install the mod there and add the JVM arguments
+  `-Dminesight.collector=ws://<host-ip>:8766` (plus optionally
+  `-Dminesight.autoworld=FarmWorld1`) to the launcher profile. Remote captures
+  are streamed back over the WebSocket into the same pool; the target and
+  class goals are split across every connected client, local or remote.
 - **Clients tab** — embeds running game windows as tabs inside the Control Panel
   (no floating windows). Farm clients launched from the Mod tab auto-embed;
   manually launched games embed on request and can be released back to the

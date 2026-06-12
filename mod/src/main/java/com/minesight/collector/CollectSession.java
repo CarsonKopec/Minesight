@@ -35,12 +35,19 @@ public class CollectSession {
      * (the image target still acts as a hard cap).
      */
     public Map<String, Integer> classTargets = new HashMap<String, Integer>();
+    /**
+     * True for clients on a DIFFERENT machine than the Control Panel: images
+     * are streamed over the WebSocket instead of written to outputDir (which
+     * only exists on the host). Fixed at session start.
+     */
+    public boolean upload;
 
     public int saved;
 
     public static CollectSession fromJson(JsonObject o) {
         CollectSession s = new CollectSession();
         s.outputDir = new File(o.get("output_dir").getAsString());
+        if (o.has("upload")) s.upload = o.get("upload").getAsBoolean();
         if (o.has("classes")) {
             JsonArray arr = o.getAsJsonArray("classes");
             for (int i = 0; i < arr.size(); i++) {
