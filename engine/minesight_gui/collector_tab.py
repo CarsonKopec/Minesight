@@ -25,10 +25,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from collections import Counter
+
 from . import collect_io
 from .constants import DATASETS_DIR
 from .gallery import ImageInspector
-from .health import list_datasets
+from .health import analyze, list_datasets
 from .widgets import LogView
 
 COLLECTOR_PORT = 8766
@@ -187,6 +189,14 @@ class CollectorTab(QWidget):
         clear_hist.setToolTip("Forget which ores were captured (sent to every connected client)")
         clear_hist.clicked.connect(self._clear_history)
         controls.addWidget(clear_hist)
+        goals_btn = QPushButton("🎯 Goals from dataset…")
+        goals_btn.setToolTip(
+            "Analyze an existing dataset and auto-fill the class goals with what\n"
+            "it's missing - 'bring every class up to N boxes'. Collect, then merge\n"
+            "back into that dataset and retrain."
+        )
+        goals_btn.clicked.connect(self._goals_from_dataset)
+        controls.addWidget(goals_btn)
         save_btn = QPushButton("💾 Save settings")
         save_btn.setToolTip("Remember every value on this tab for future sessions")
         save_btn.clicked.connect(self._save_settings)
@@ -341,6 +351,51 @@ class CollectorTab(QWidget):
 
     def _checked_classes(self) -> list[str]:
         return [cb.property("label") for cb in self.class_checks if cb.isChecked()]
+
+    def _goals_from_dataset(self) -> None:
+        """Fill the class goals with whatever a chosen dataset is short of."""
+        datasets = list_datasets()
+        if not datasets:
+            QMessageBox.information(self, "MineSight", "No datasets found under engine/datasets/.")
+            return
+        names = [d.name for d in datasets]
+        name, ok = QInputDialog.getItem(
+            self, "Goals from dataset", "Dataset to top up:", names, len(names) - 1, False
+        )
+        if not ok:
+            return
+        level, ok = QInputDialog.getInt(
+            self, "Goals from dataset",
+            "Bring every collectible class up to (boxes):", 300, 10, 100000, 50,
+        )
+        if not ok:
+            return
+
+        health = analyze(next(d for d in datasets if d.name == name))
+        totals: Counter = Counter()
+        for stats in health.splits.values():
+            totals.update(stats.hist)
+
+        self.log.append_line(f"[goals from {name}, target {level} boxes per class:]")
+        not_collectible = [
+            n for n in health.names if n not in self.class_goals and totals.get(health.names.index(n), 0) < level
+        ]
+        for cb in self.class_checks:
+            label = cb.property("label")
+            spin = self.class_goals[label]
+            if label in health.names:
+                have = totals.get(health.names.index(label), 0)
+            else:
+                have = 0  # new class for this dataset (merge will need it added first)
+            deficit = max(0, level - have)
+            spin.setValue(deficit)
+            if deficit > 0:
+                cb.setChecked(True)
+                self.log.append_line(f"  {label}: has {have} → collect {deficit} more")
+        if not_collectible:
+            self.log.append_line(
+                f"  (also short but not collectible from 1.8.9 worlds: {', '.join(not_collectible)})"
+            )
 
     def _class_targets(self, n_clients: int) -> dict[str, int]:
         """Per-client share of each class goal (0-goals omitted)."""
