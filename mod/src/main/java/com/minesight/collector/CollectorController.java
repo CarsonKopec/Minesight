@@ -229,10 +229,12 @@ public class CollectorController {
             case DATA_WAIT:
                 // Only wait for world DATA here (cheap); the expensive render
                 // settle happens after we know there's actually a cave to shoot.
+                // Fresh terrain needs the server to GENERATE chunks first, so
+                // give it a few seconds before giving up.
                 waitTicks++;
-                if (mc.theWorld.isBlockLoaded(mc.thePlayer.getPosition()) && waitTicks >= 5) {
+                if (hasChunkData(mc.thePlayer.getPosition()) && waitTicks >= 5) {
                     state = State.FIND_CAVE;
-                } else if (waitTicks > 60) {
+                } else if (waitTicks > 80) {
                     state = State.NEXT_TARGET;
                 }
                 break;
@@ -245,7 +247,7 @@ public class CollectorController {
                 // teleport; capturing too early yields void frames. The frame
                 // quality check catches stragglers, this wait avoids most.
                 if (waitTicks >= session.settleTicks
-                        && mc.theWorld.isBlockLoaded(mc.thePlayer.getPosition())) {
+                        && hasChunkData(mc.thePlayer.getPosition())) {
                     state = State.SCAN;
                 } else if (waitTicks > session.settleTicks + 100) {
                     state = State.NEXT_TARGET;
@@ -321,6 +323,16 @@ public class CollectorController {
 
     private static long regionKey(int x, int z) {
         return (((long) (x >> 6)) << 32) ^ ((z >> 6) & 0xFFFFFFFFL);
+    }
+
+    /**
+     * Whether the CLIENT actually has block data here. isBlockLoaded() lies on
+     * the client (always true), and missing chunks are blank EmptyChunks that
+     * read as all-air - which made never-generated terrain look like one giant
+     * cave full of nothing.
+     */
+    private boolean hasChunkData(BlockPos pos) {
+        return !mc.theWorld.getChunkFromBlockCoords(pos).isEmpty();
     }
 
     /**
@@ -425,7 +437,7 @@ public class CollectorController {
             int y = Math.max(2, Math.min(250, center.getY() + rng.nextInt(41) - 20));
             int z = center.getZ() + rng.nextInt(41) - 20;
             BlockPos p = new BlockPos(x, y, z);
-            if (!mc.theWorld.isBlockLoaded(p)) continue;
+            if (!hasChunkData(p)) continue;
             if (mc.theWorld.isAirBlock(p) && mc.theWorld.isAirBlock(p.up())) {
                 air = p;
                 break;
@@ -537,7 +549,7 @@ public class CollectorController {
             double dist = 2.5 + rng.nextDouble() * 10.5;
             Vec3 eye = oreCenter.addVector(dx / len * dist, dy / len * dist, dz / len * dist);
             BlockPos feet = new BlockPos(eye.xCoord, eye.yCoord - mc.thePlayer.getEyeHeight(), eye.zCoord);
-            if (!mc.theWorld.isBlockLoaded(feet)) continue;
+            if (!hasChunkData(feet)) continue;
             if (!mc.theWorld.isAirBlock(feet) || !mc.theWorld.isAirBlock(feet.up())) continue;
             // The eye itself can sit a block above the head block - a camera
             // clipped into the ceiling sees void.

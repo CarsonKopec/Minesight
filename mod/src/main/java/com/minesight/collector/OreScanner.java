@@ -58,7 +58,8 @@ public final class OreScanner {
         int yHi = Math.min(255, center.getY() + radius);
         BlockPos from = new BlockPos(center.getX() - radius, yLo, center.getZ() - radius);
         BlockPos to = new BlockPos(center.getX() + radius, yHi, center.getZ() + radius);
-        if (!world.isBlockLoaded(center)) return out;
+        // Client-side isBlockLoaded always returns true; check for real data.
+        if (world.getChunkFromBlockCoords(center).isEmpty()) return out;
         for (BlockPos pos : BlockPos.getAllInBox(from, to)) {
             String label = ORE_LABELS.get(world.getBlockState(pos).getBlock());
             if (label != null && wanted.contains(label)) {
