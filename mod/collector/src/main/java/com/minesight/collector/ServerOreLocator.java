@@ -3,6 +3,8 @@ package com.minesight.collector;
 import com.minesight.OreScanner;
 import net.minecraft.util.BlockPos;
 import net.minecraft.world.WorldServer;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.gen.ChunkProviderServer;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -31,6 +33,8 @@ public class ServerOreLocator {
     private Set<String> wanted;
     private int yLo;
     private int yHi;
+    private int chunksScanned;
+    private int oresFound;
 
     /** (Re)aim the locator at an area; clears progress, keeps queued results. */
     public synchronized void configure(BlockPos center, int radiusBlocks, Set<String> wantedLabels,
@@ -71,6 +75,14 @@ public class ServerOreLocator {
         return results.size();
     }
 
+    public int chunksScanned() {
+        return chunksScanned;
+    }
+
+    public int oresFound() {
+        return oresFound;
+    }
+
     public BlockPos poll() {
         return results.poll();
     }
@@ -99,11 +111,24 @@ public class ServerOreLocator {
     }
 
     private void scanChunk(WorldServer world, int cx, int cz) {
+        Chunk chunk;
         try {
-            world.theChunkProviderServer.loadChunk(cx, cz);  // generate if absent
+            ChunkProviderServer cps = world.theChunkProviderServer;
+            // Ore is placed during POPULATION, which vanilla only runs once a
+            // chunk's 2x2 neighbor quadrant is loaded. Load the quadrant first,
+            // then require the centre to be populated - otherwise we'd scan bare
+            // terrain with no ore in it (the reason smart targeting looked dumb).
+            cps.provideChunk(cx + 1, cz);
+            cps.provideChunk(cx, cz + 1);
+            cps.provideChunk(cx + 1, cz + 1);
+            chunk = cps.provideChunk(cx, cz);
         } catch (Exception e) {
             return;
         }
+        if (chunk == null || !chunk.isTerrainPopulated()) {
+            return;  // not yet populated - skip (no ore to find)
+        }
+        chunksScanned++;
         int baseX = cx << 4;
         int baseZ = cz << 4;
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
@@ -111,9 +136,10 @@ public class ServerOreLocator {
             for (int z = baseZ; z < baseZ + 16; z++) {
                 for (int y = yLo; y <= yHi; y++) {
                     pos.set(x, y, z);
-                    String label = OreScanner.labelFor(world.getBlockState(pos).getBlock());
+                    String label = OreScanner.labelFor(chunk.getBlockState(pos).getBlock());
                     if (label != null && wanted.contains(label) && hasAirNeighbor(world, x, y, z)) {
                         results.add(new BlockPos(x, y, z));
+                        oresFound++;
                         if (results.size() >= RESULT_CAP) return;
                     }
                 }

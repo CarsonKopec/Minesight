@@ -42,6 +42,7 @@ public class CollectorController {
     private final DatasetWriter writer = new DatasetWriter();
     private final VisitedStore visited = new VisitedStore();
     private final ServerOreLocator locator = new ServerOreLocator();
+    private int smartTick;
 
     private CollectorSocket socket;
     private CollectSession session;
@@ -266,6 +267,20 @@ public class CollectorController {
         // Menus (e.g. auto-pause) would end up inside the screenshots.
         if (mc.currentScreen != null) {
             mc.displayGuiScreen(null);
+        }
+
+        // Keep the server scan running in the background regardless of state,
+        // so the ore queue fills ahead of consumption (smart targeting).
+        if (session.smartTargeting) {
+            smartTick++;
+            if (smartTick % 5 == 0) {
+                requestRefill();
+            }
+            if (smartTick % 100 == 0) {
+                sendLog("Smart targeting: " + locator.available() + " ore queued, "
+                        + locator.oresFound() + " found in " + locator.chunksScanned()
+                        + " populated chunks");
+            }
         }
 
         switch (state) {
