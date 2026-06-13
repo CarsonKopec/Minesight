@@ -57,6 +57,7 @@ public final class CaptureManager {
     private FarmProtocol.CaptureRequest pending;
     private int waited;
     private boolean prevHudHidden;
+    private boolean hudHiddenByUs;
 
     public CaptureManager(MinecraftClient mc) {
         this.mc = mc;
@@ -68,8 +69,9 @@ public final class CaptureManager {
         this.pending = req;
         this.waited = 0;
         uploader.ensureConnected();  // best-effort; falls back to local-only
-        if (req.hideHud()) {
+        if (req.hideHud() && !hudHiddenByUs) {
             this.prevHudHidden = mc.options.hudHidden;
+            this.hudHiddenByUs = true;
             mc.options.hudHidden = true;
         }
         LOG.info("Capture {} requested: {} ore box(es)", req.shotId(), req.boxes().size());
@@ -87,13 +89,18 @@ public final class CaptureManager {
             return;
         }
         if (waited >= TIMEOUT_TICKS) {
-            LOG.warn("Capture {} timed out before the view was ready", pending.shotId());
-            finish(false, 0);
+            FarmProtocol.CaptureRequest req = pending;
+            pending = null;
+            LOG.warn("Capture {} timed out before the view was ready", req.shotId());
+            finish(req, false, 0);
         }
     }
 
     private void doCapture() {
+        // Claim the request up front so a deferred screenshot callback can't make
+        // the next tick fire a second capture for the same request.
         final FarmProtocol.CaptureRequest req = pending;
+        pending = null;
         final Framebuffer fb = mc.getFramebuffer();
         final int width = fb.textureWidth;
         final int height = fb.textureHeight;
@@ -124,7 +131,7 @@ public final class CaptureManager {
 
         if (visible.isEmpty()) {
             LOG.info("Capture {}: no visible ore, nothing saved", req.shotId());
-            finish(false, 0);
+            finish(req, false, 0);
             return;
         }
 
@@ -139,7 +146,7 @@ public final class CaptureManager {
             } else {
                 LOG.warn("Capture {}: write failed", req.shotId());
             }
-            finish(saved != null, visible.size());
+            finish(req, saved != null, visible.size());
         });
     }
 
@@ -183,13 +190,15 @@ public final class CaptureManager {
                 && Math.abs(bp.getZ() + 0.5 - z) < 1.0;
     }
 
-    private void finish(boolean ok, int boxes) {
-        FarmProtocol.CaptureRequest req = pending;
-        pending = null;
-        if (req != null && req.hideHud()) {
-            mc.options.hudHidden = prevHudHidden;
+    private void finish(FarmProtocol.CaptureRequest req, boolean ok, int boxes) {
+        if (req == null) {
+            return;
         }
-        if (req != null && ClientPlayNetworking.canSend(FarmPayload.ID)) {
+        if (hudHiddenByUs) {
+            mc.options.hudHidden = prevHudHidden;
+            hudHiddenByUs = false;
+        }
+        if (ClientPlayNetworking.canSend(FarmPayload.ID)) {
             ClientPlayNetworking.send(new FarmPayload(
                     FarmProtocol.captured(req.shotId(), ok, boxes)));
         }

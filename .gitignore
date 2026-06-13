@@ -22,7 +22,9 @@ engine/logs/
 
 # MineSight 2.0 (Fabric client + Folia plugin) build output
 client/build/
+client/build-client*/
 client/.gradle/
+client/.gradle-client*/
 client/run/
 client/run-client*/
 plugin/build/

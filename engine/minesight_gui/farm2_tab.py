@@ -169,8 +169,12 @@ class Farm2Tab(QWidget):
             self._launch_timer.stop()
             return
         idx = self._launch_queue.pop(0)
+        # Each client gets its own project cache (so parallel runClient calls
+        # don't deadlock on the build lock), build dir, and run dir.
         args = [
             "/c", "gradlew.bat", "runClient", "--console=plain",
+            "--project-cache-dir", f".gradle-client{idx}",
+            f"-Pminesight.buildSuffix=client{idx}",
             f"-Pminesight.runDir=run-client{idx}",
         ]
         if self.autojoin.isChecked() and self.server_addr.text().strip():

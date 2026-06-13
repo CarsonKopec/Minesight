@@ -6,6 +6,13 @@ version = project.property("mod_version") as String
 group = project.property("maven_group") as String
 base { archivesName.set(project.property("archives_base_name") as String) }
 
+// Per-instance build dir so several dev clients can build+run in parallel
+// (-Pminesight.buildSuffix=clientN -> build-clientN) without clobbering each
+// other's output. Pair with --project-cache-dir and -Pminesight.runDir.
+(project.findProperty("minesight.buildSuffix") as String?)?.let {
+    layout.buildDirectory.set(layout.projectDirectory.dir("build-$it"))
+}
+
 java {
     toolchain.languageVersion.set(JavaLanguageVersion.of(21))
     withSourcesJar()

@@ -36,12 +36,16 @@ public final class CaptureSession {
     private final int target;
     private final boolean hideHud;
 
-    private State state = State.IDLE;
+    // state is read on the global-region tick but also written by stop() from
+    // the command thread; currentShot is written on the tick and read by
+    // onCaptured() on the player region thread - both must be visible across
+    // threads. The rest are touched only on the tick (single-threaded).
+    private volatile State state = State.IDLE;
     private int saved;
     private int failed;
     private int shotCounter;
     private int stateTicks;
-    private int currentShot = -1;
+    private volatile int currentShot = -1;
     private FoliaOreLocator.OrePos currentOre;
 
     private volatile boolean acked;
@@ -142,13 +146,16 @@ public final class CaptureSession {
     }
 
     private void teleport(Player player, FoliaOreLocator.OrePos ore) {
-        Location target = new Location(player.getWorld(),
-                ore.x() + 0.5, ore.y() + 0.5, ore.z() + 0.5);
-        // Fixed diagonal viewpoint; the client rejects + reports the shot if the
-        // ore turns out occluded, and the session simply moves to the next one.
-        Location eye = target.clone().add(3.0, 2.0, 3.0);
-        eye.setDirection(target.toVector().subtract(eye.toVector()));
+        // Everything that reads player/world state runs on the player's region
+        // thread (Folia); building the Location off-region would touch getWorld()
+        // from the wrong thread.
         player.getScheduler().run(plugin, t -> {
+            Location target = new Location(player.getWorld(),
+                    ore.x() + 0.5, ore.y() + 0.5, ore.z() + 0.5);
+            // Fixed diagonal viewpoint; the client rejects + reports the shot if
+            // the ore is occluded, and the session moves to the next one.
+            Location eye = target.clone().add(3.0, 2.0, 3.0);
+            eye.setDirection(target.toVector().subtract(eye.toVector()));
             player.setGameMode(GameMode.SPECTATOR);
             player.teleportAsync(eye);
         }, null);
