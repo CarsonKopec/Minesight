@@ -76,12 +76,15 @@ spectators (no client-side movement, no anti-cheat).
 
 `minesight:farm` plugin channel (client ↔ plugin), length-prefixed binary or JSON:
 
+Each message is a UTF type tag + a type-specific body via `DataInput`/`DataOutput`
+(client `FarmProtocol`, mirrored plugin-side):
+
 | Direction | Message | Payload |
 |-----------|---------|---------|
-| client→plugin | `hello` | client id |
-| plugin→client | `capture` | shotId, gamma/fov, ore AABBs (world coords + class) |
-| client→plugin | `captured` | shotId, ok, #boxes |
-| plugin→client | `session` | on/off, hideGUI, etc. |
+| client→plugin | `hello` | UTF clientId |
+| plugin→client | `pong` | UTF who (`MineSightFarm vX`) |
+| plugin→client | `capture` | int shotId, bool hideHud, int n, then n×(UTF label, int min x/y/z, int max x/y/z) — ore AABBs in world coords |
+| client→plugin | `captured` | int shotId, bool ok, int #boxesVisible |
 
 GUI ↔ plugin: reuse the JSON-over-WebSocket control protocol (`PROTOCOL.md`),
 plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
@@ -107,21 +110,36 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
 - ✅ **Fabric client** (`client/`) builds — MC 1.21.11 / Yarn / Fabric API; the
   `FarmPayload` custom-payload networking compiles against the real 1.21 API,
   sends `hello` on join, handles `pong`.
-- ⏳ **Live round-trip** still to verify in-game: run a Folia 1.21.11 server with
-  `minesightfarm-2.0.0.jar`, join with a Fabric 1.21.11 client carrying
-  `minesight-2.0.0.jar` + Fabric API; the client chats "[MineSight] linked to
-  MineSightFarm vX" if the packet path works. That confirms risk #1.
+- ✅ **Live round-trip VERIFIED in-game** (2026-06-13): Folia 1.21.11 server +
+  Fabric 1.21.11 client — hello/pong flows over `minesight:farm`. Risk #1 closed.
 - ✅ **Regionized ore scanner** (`FoliaOreLocator` + `OreCatalog`) compiles
   against the real Folia API. Async chunk gen (`getChunkAtAsync(...,true)`),
   region-thread `ChunkSnapshot`, off-thread snapshot scan, nearest-first chunk
   order, bounded in-flight concurrency, thread-safe result queue. `OreCatalog`
   covers 1.21 ores incl. deepslate variants (→ same base label) and the new
   `copper_ore`, plus modern confuser categories (amethyst/sculk added).
-- ✅ **In-game test command** `/minesightfarm scan <ore> [radius] | status | tp |
-  stop` (alias `/msf`): drives the scanner off a global-region heartbeat and
-  teleports the player (spectator, `teleportAsync`) to located ore — exercises
-  risks #3/#4 without the Python GUI.
-- ⏳ **Live scan/teleport** still to verify in-game (needs a running Folia world).
+- ✅ **In-game test command** `/minesightfarm scan <ore> [radius] | capture
+  [count] | status | tp | stop` (alias `/msf`): drives the scanner off a
+  global-region heartbeat and teleports the player (spectator, `teleportAsync`)
+  to located ore.
+- ✅ **Scan + teleport VERIFIED in-game** (2026-06-13): `/msf scan` fills the
+  queue, `/msf tp` warps to a find. Risks #3/#4 closed.
+- ✅ **Capture pipeline** built (both halves compile):
+  - Plugin `CaptureSession` orchestrates teleport → settle → `capture` packet →
+    await `captured` ack → next, over the queued ore, to a target image count.
+  - Client `CaptureManager` settles a few ticks, grabs the framebuffer
+    (`ScreenshotRecorder.takeScreenshot`), projects each ore world-AABB to a
+    screen rect (`GroundTruthProjector`: camera pose from `getCameraPos`/
+    yaw/pitch + a perspective matrix from the FOV option), occlusion-tests via
+    `world.raycast`, writes `images/` + YOLO `labels/` (`DatasetWriter`, never
+    saves an empty frame), and acks.
+- ⏳ **Capture still to verify in-game** + calibrate box alignment (risk #2 /
+  backlog #7): run `/msf scan` then `/msf capture <n>` and inspect the PNGs +
+  labels under `.minecraft/minesight/captures/`. The FOV/near constants in
+  `CaptureManager` are the alignment knobs.
+- ⏳ **Image upload to the GUI** not wired yet — the client writes the dataset
+  locally for now (same as the 1.8.9 `DatasetWriter`); the `collect_image` WS
+  upload is the next integration step.
 
 ### Build / run
 - Plugin: `cd plugin && ./gradlew build` → `plugin/build/libs/minesightfarm-2.0.0.jar` into the Folia `plugins/` folder.
@@ -129,26 +147,26 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
 
 ## Phasing
 
-1. **PoC (now):** scaffold `plugin/` + `client/`; prove a **client↔plugin
-   packet round-trip** on 1.21.11 (the linchpin — if packets don't flow, the
-   split changes). Plus confirm the plugin can scan/teleport on Folia.
-2. **Collection MVP:** plugin scan + teleport + capture-trigger; client capture
-   + ground-truth projection + image upload. Reuse the GUI collector.
+1. ✅ **PoC:** scaffold `plugin/` + `client/`; client↔plugin packet round-trip
+   on 1.21.11; plugin scan/teleport on Folia. **Done + verified in-game.**
+2. **Collection MVP (in progress):** plugin scan + teleport + capture-trigger ✅;
+   client capture + ground-truth projection + local dataset write ✅ (both
+   compile); ⏳ verify/calibrate captures in-game; ⏳ image upload to the GUI.
 3. **Overlay/world port:** detection overlay, markers, radar on 1.21.
 4. **Polish:** parity with 1.8.9 features (visited history, hard negatives,
    smart targeting, multi-client) on the new architecture.
 
 ## Open risks to validate in the PoC
 
-1. NeoForge-free: **Fabric client ↔ Paper/Folia plugin custom packets** on
-   1.21.11 (1.20.5+ tightened custom-payload networking). ← prove first.
-2. Can the connected client **project ground-truth ore boxes** from
-   server-streamed chunks, or must the plugin send screen/world positions?
-   (Plan: plugin sends world AABBs; client projects — it has the rendered
-   chunks.)
-3. **Folia teleport throughput** for rapid cross-region spectator moves
-   (`teleportAsync`, region transfer cost).
-4. Folia **async chunk load/generate + scan** ahead of the camera.
+1. ✅ NeoForge-free: **Fabric client ↔ Paper/Folia plugin custom packets** on
+   1.21.11 — proven in-game.
+2. ⏳ Can the connected client **project ground-truth ore boxes**? Plan
+   implemented: plugin sends world AABBs, client projects with its camera pose +
+   FOV-derived perspective matrix. **Still to calibrate against in-game captures**
+   (the FOV/near constants in `CaptureManager`).
+3. ✅ **Folia teleport throughput** — spectator `teleportAsync` works in-game.
+4. ✅ Folia **async chunk load/generate + scan** — `FoliaOreLocator` finds ore
+   in-game (scan counts climb, `/msf tp` lands on it).
 
 ## Repo layout (this branch)
 

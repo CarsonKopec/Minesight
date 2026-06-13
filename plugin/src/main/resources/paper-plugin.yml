@@ -8,5 +8,5 @@ authors: [kopec]
 commands:
   minesightfarm:
     description: Control the MineSight dataset farm (regionized ore scan + teleport).
-    usage: /minesightfarm <scan <ore> [radius] | status | tp | stop>
+    usage: /minesightfarm <scan <ore> [radius] | capture [count] | status | tp | stop>
     aliases: [msf]

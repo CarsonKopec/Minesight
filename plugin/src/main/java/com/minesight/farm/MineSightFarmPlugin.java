@@ -8,7 +8,6 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.messaging.PluginMessageListener;
-import org.bukkit.util.Vector;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.ByteArrayInputStream;
@@ -16,6 +15,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -39,6 +39,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
     public static final String CHANNEL = "minesight:farm";
 
     private FoliaOreLocator locator;
+    private volatile CaptureSession session;
 
     @Override
     public void onEnable() {
@@ -52,10 +53,18 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         }
 
         // Folia global-region heartbeat: pumps the ore scanner (launches async
-        // chunk gen+scan up to its in-flight budget) every tick while running.
+        // chunk gen+scan up to its in-flight budget) and advances any capture
+        // session every tick.
         getServer().getGlobalRegionScheduler().runAtFixedRate(this, task -> {
             if (locator.isRunning()) {
                 locator.pump();
+            }
+            CaptureSession s = session;
+            if (s != null) {
+                s.tick();
+                if (s.isDone()) {
+                    session = null;
+                }
             }
         }, 1L, 1L);
 
@@ -78,19 +87,26 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (args.length == 0) {
-            sender.sendMessage("Usage: /minesightfarm <scan <ore> [radius] | status | tp | stop>");
+            sender.sendMessage("Usage: /minesightfarm <scan <ore> [radius] | capture [count] | status | tp | stop>");
             return true;
         }
         switch (args[0].toLowerCase()) {
             case "scan":
                 return cmdScan(sender, args);
+            case "capture":
+                return cmdCapture(sender, args);
             case "status":
                 return cmdStatus(sender);
             case "tp":
                 return cmdTeleport(sender);
             case "stop":
                 locator.stop();
-                sender.sendMessage("MineSight: scan stopped.");
+                CaptureSession s = session;
+                if (s != null) {
+                    s.stop();
+                    session = null;
+                }
+                sender.sendMessage("MineSight: scan + capture stopped.");
                 return true;
             default:
                 sender.sendMessage("Unknown subcommand: " + args[0]);
@@ -136,12 +152,42 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         return true;
     }
 
+    private boolean cmdCapture(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("MineSight: /minesightfarm capture must be run by a player (the camera).");
+            return true;
+        }
+        if (locator.available() == 0 && !locator.isRunning()) {
+            sender.sendMessage("MineSight: no ore queued. Run /minesightfarm scan <ore> first.");
+            return true;
+        }
+        if (session != null && !session.isDone()) {
+            sender.sendMessage("MineSight: a capture session is already running. /minesightfarm stop to cancel.");
+            return true;
+        }
+        int count = 1;
+        if (args.length >= 2) {
+            try {
+                count = Math.max(1, Math.min(10000, Integer.parseInt(args[1])));
+            } catch (NumberFormatException ignored) {
+                sender.sendMessage("MineSight: count must be a number; using " + count + ".");
+            }
+        }
+        session = new CaptureSession(this, locator, player.getUniqueId(), count, true);
+        sender.sendMessage("MineSight: capturing " + count + " frame(s) from queued ore. /minesightfarm status to watch.");
+        return true;
+    }
+
     private boolean cmdStatus(CommandSender sender) {
         sender.sendMessage(String.format(
                 "MineSight: %s | %d ore queued, %d found across %d chunks scanned%s",
                 locator.isRunning() ? "scanning" : "idle",
                 locator.available(), locator.oresFound(), locator.chunksScanned(),
                 locator.exhausted() ? " (area exhausted)" : ""));
+        CaptureSession s = session;
+        if (s != null) {
+            sender.sendMessage("MineSight: " + s.status());
+        }
         return true;
     }
 
@@ -168,9 +214,36 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         return true;
     }
 
-    // ---- plugin-channel transport (PoC hello/pong) -------------------------
+    // ---- plugin-channel transport -----------------------------------------
 
-    /** Read the client's hello, reply with a pong over the same channel. */
+    /**
+     * plugin -> client {@code capture}: "photograph these ore AABBs from where
+     * you stand". One block per box: min (x,y,z) .. max (x+1,y+1,z+1).
+     */
+    void sendCapture(Player player, int shotId, boolean hideHud, List<FoliaOreLocator.OrePos> boxes) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (DataOutputStream d = new DataOutputStream(out)) {
+            d.writeUTF("capture");
+            d.writeInt(shotId);
+            d.writeBoolean(hideHud);
+            d.writeInt(boxes.size());
+            for (FoliaOreLocator.OrePos b : boxes) {
+                d.writeUTF(b.label());
+                d.writeInt(b.x());
+                d.writeInt(b.y());
+                d.writeInt(b.z());
+                d.writeInt(b.x() + 1);
+                d.writeInt(b.y() + 1);
+                d.writeInt(b.z() + 1);
+            }
+        } catch (IOException e) {
+            return;
+        }
+        player.getScheduler().run(this,
+                t -> player.sendPluginMessage(this, CHANNEL, out.toByteArray()), null);
+    }
+
+    /** Read client packets: hello -> pong, captured -> advance the session. */
     @Override
     public void onPluginMessageReceived(@NotNull String channel, @NotNull Player player,
                                         @NotNull byte[] message) {
@@ -179,9 +252,19 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         }
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(message))) {
             String type = in.readUTF();
-            getLogger().info("Packet from " + player.getName() + ": " + type);
-            if ("hello".equals(type)) {
-                sendPong(player, in.readUTF());
+            switch (type) {
+                case "hello" -> sendPong(player, in.readUTF());
+                case "captured" -> {
+                    int shotId = in.readInt();
+                    boolean ok = in.readBoolean();
+                    int boxes = in.readInt();
+                    CaptureSession s = session;
+                    if (s != null) {
+                        s.onCaptured(shotId, ok);
+                    }
+                    getLogger().fine("captured shot " + shotId + " ok=" + ok + " boxes=" + boxes);
+                }
+                default -> getLogger().fine("Unknown packet from " + player.getName() + ": " + type);
             }
         } catch (IOException e) {
             getLogger().warning("Bad packet from " + player.getName() + ": " + e);
