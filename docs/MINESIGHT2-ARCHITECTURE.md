@@ -143,6 +143,18 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
   `-Dminesight.guiUrl`). Best-effort + lazy reconnect; the durable local copy
   under `.minecraft/minesight/captures/` is always written too. The GUI accepts
   these outside a 1.8.9 session into a dedicated `farm-stream` dataset pool.
+- ✅ **Phase 3 — detection overlay** ported to 1.21 (both compile):
+  `EngineClient` (JDK `WebSocket`, default `ws://127.0.0.1:8765`, override
+  `-Dminesight.engineUrl`) reconnects to the Python ML engine, streams `player`
+  state each tick, and feeds `detections` into a `DetectionStore` (2 s
+  staleness). `OverlayRenderer` draws the 2D boxes on `DrawContext` via Fabric
+  `HudRenderCallback`, rescaling capture-frame px → scaled GUI coords. F8 cycles
+  `OverlayMode`, F9 sends `review_capture`. Reuses the existing engine protocol
+  unchanged, so the Python side needs no edits.
+- ⏳ **Phase 3 remainder**: world markers + radar (the 3D/minimap parts) — they
+  need screen↔world unprojection and are the next slice.
+- ⏳ **Overlay still to verify in-game** (needs the engine running + a window
+  the engine captures).
 
 ### Build / run
 - Plugin: `cd plugin && ./gradlew build` → `plugin/build/libs/minesightfarm-2.0.0.jar` into the Folia `plugins/` folder.
@@ -163,7 +175,8 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
 2. **Collection MVP (in progress):** plugin scan + teleport + capture-trigger ✅;
    client capture + ground-truth projection + local dataset write ✅ (both
    compile); ⏳ verify/calibrate captures in-game; ⏳ image upload to the GUI.
-3. **Overlay/world port:** detection overlay, markers, radar on 1.21.
+3. **Overlay/world port:** detection overlay ✅ (engine WS + HUD boxes + F8/F9);
+   ⏳ world markers + radar (screen↔world) remain.
 4. **Polish:** parity with 1.8.9 features (visited history, hard negatives,
    smart targeting, multi-client) on the new architecture.
 

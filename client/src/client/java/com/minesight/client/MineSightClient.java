@@ -1,15 +1,24 @@
 package com.minesight.client;
 
 import com.minesight.client.capture.CaptureManager;
+import com.minesight.client.detect.DetectionStore;
+import com.minesight.client.detect.EngineClient;
+import com.minesight.client.detect.OverlayMode;
+import com.minesight.client.detect.OverlayRenderer;
 import com.minesight.client.net.FarmPayload;
 import com.minesight.client.net.FarmProtocol;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
 import net.minecraft.text.Text;
+import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,20 +26,26 @@ import java.io.DataInputStream;
 import java.io.IOException;
 
 /**
- * MineSight Fabric client (1.21.11) - the camera side of the 2.0 split.
+ * MineSight Fabric client (1.21.11) - the camera + vision-overlay side of 2.0.
  *
- * <p>Transport: custom packets with the MineSightFarm Paper/Folia plugin over
- * the {@code minesight:farm} channel. On top of the verified hello/pong
- * round-trip this now handles {@code capture} requests: the plugin teleports the
- * spectator and sends the in-view ore AABBs; {@link CaptureManager} renders,
- * grabs the framebuffer, projects ground-truth boxes, writes the labeled frame,
- * and replies {@code captured}.
+ * <ul>
+ *   <li><b>Farm transport</b>: custom packets with the MineSightFarm Folia
+ *       plugin over {@code minesight:farm}; handles {@code capture} requests via
+ *       {@link CaptureManager} (render, grab framebuffer, project boxes, ack).</li>
+ *   <li><b>Detection overlay</b>: connects to the Python ML engine
+ *       ({@link EngineClient}), streams player state, and draws live detection
+ *       boxes on the HUD ({@link OverlayRenderer}). F8 cycles overlay mode, F9
+ *       flags the current frame for review.</li>
+ * </ul>
  */
 public class MineSightClient implements ClientModInitializer {
 
     private static final Logger LOG = LoggerFactory.getLogger("minesight");
 
     private CaptureManager capture;
+    private EngineClient engine;
+    private KeyBinding overlayKey;
+    private KeyBinding reviewKey;
 
     @Override
     public void onInitializeClient() {
@@ -40,8 +55,36 @@ public class MineSightClient implements ClientModInitializer {
         MinecraftClient mc = MinecraftClient.getInstance();
         capture = new CaptureManager(mc);
 
-        // Drive the capture state machine on the client tick.
-        ClientTickEvents.END_CLIENT_TICK.register(client -> capture.tick());
+        // Detection overlay: engine connection + HUD renderer.
+        DetectionStore store = new DetectionStore();
+        engine = new EngineClient(store);
+        OverlayRenderer overlay = new OverlayRenderer(store);
+        HudRenderCallback.EVENT.register((ctx, tick) -> overlay.render(ctx));
+
+        overlayKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.minesight.overlay", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F8,
+                KeyBinding.Category.MISC));
+        reviewKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.minesight.review", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F9,
+                KeyBinding.Category.MISC));
+
+        // One client-tick handler: capture state machine, engine I/O, keybinds.
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            capture.tick();
+            engine.tick(client);
+            while (overlayKey.wasPressed()) {
+                OverlayMode mode = OverlayMode.cycle();
+                if (client.player != null) {
+                    client.player.sendMessage(Text.literal("[MineSight] overlay: " + mode.label), true);
+                }
+            }
+            while (reviewKey.wasPressed()) {
+                engine.reviewCapture();
+                if (client.player != null) {
+                    client.player.sendMessage(Text.literal("[MineSight] frame flagged for review"), true);
+                }
+            }
+        });
 
         ClientPlayNetworking.registerGlobalReceiver(FarmPayload.ID,
                 (payload, context) -> context.client().execute(() -> handle(payload.data())));
