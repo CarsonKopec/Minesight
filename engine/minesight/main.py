@@ -66,6 +66,60 @@ def _gpu_check() -> None:
         )
 
 
+class _FramePipe:
+    """Hands frames from the capture thread to the inference thread, one frame
+    ahead at most: the producer grabs frame N+1 while the consumer runs
+    inference on N, so throughput is max(capture, inference) not their sum.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._frame = None
+        self._using_window = False
+        self._ready = threading.Event()
+        self._taken = threading.Event()
+        self._taken.set()  # allow the first grab
+        self._closed = False
+
+    def publish(self, frame, using_window) -> None:
+        # Wait until the consumer has taken the previous frame (stay <=1 ahead).
+        while not self._taken.wait(0.2):
+            if self._closed:
+                return
+        if self._closed:
+            return
+        with self._lock:
+            self._frame = frame
+            self._using_window = using_window
+        self._taken.clear()
+        self._ready.set()
+
+    def take(self, timeout: float = 1.0):
+        if not self._ready.wait(timeout):
+            return None, False
+        with self._lock:
+            frame, using_window = self._frame, self._using_window
+        self._ready.clear()
+        self._taken.set()  # let the producer grab the next frame while we work
+        return frame, using_window
+
+    def close(self) -> None:
+        self._closed = True
+        self._taken.set()
+        self._ready.set()
+
+
+def _capture_loop(capture: WindowCapture, pipe: _FramePipe, stop: threading.Event) -> None:
+    try:
+        while not stop.is_set():
+            frame = capture.grab()
+            pipe.publish(frame, capture.using_window)
+    except Exception:
+        log.exception("Capture thread crashed")
+    finally:
+        pipe.close()
+
+
 def _pipeline(cfg: Config, server: DetectionServer, loop, stop: threading.Event) -> None:
     try:
         _pipeline_loop(cfg, server, loop, stop)
@@ -80,6 +134,13 @@ def _pipeline_loop(cfg: Config, server: DetectionServer, loop, stop: threading.E
     # Active learning: the server saves the current frame on demand (hotkey/GUI).
     server.review_callback = save_review
 
+    # Capture runs in its own thread so screen-grab overlaps GPU inference.
+    pipe = _FramePipe()
+    cap_thread = threading.Thread(
+        target=_capture_loop, args=(capture, pipe, stop), name="minesight-capture", daemon=True
+    )
+    cap_thread.start()
+
     frames = 0
     t0 = time.monotonic()
     fps = 0.0
@@ -90,8 +151,10 @@ def _pipeline_loop(cfg: Config, server: DetectionServer, loop, stop: threading.E
 
     # No artificial FPS cap: the spec's 10-30 FPS limit is not needed on a 4060 Ti.
     while not stop.is_set():
-        frame = capture.grab()
-        if not capture.using_window and not warned_fallback:
+        frame, using_window = pipe.take(timeout=1.0)
+        if frame is None:
+            continue  # no frame yet (startup) or shutting down
+        if not using_window and not warned_fallback:
             log.warning(
                 "Minecraft window '%s' not found - capturing monitor %d instead",
                 cfg.window_title,
@@ -163,7 +226,7 @@ def _pipeline_loop(cfg: Config, server: DetectionServer, loop, stop: threading.E
                 "fps": round(fps, 1),
                 "objects": len(objects),
                 "mod_clients": server.mod_clients,
-                "window_found": capture.using_window,
+                "window_found": using_window,
             }
             asyncio.run_coroutine_threadsafe(server.broadcast_preview(stats), loop)
 
@@ -172,6 +235,8 @@ def _pipeline_loop(cfg: Config, server: DetectionServer, loop, stop: threading.E
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 stop.set()
 
+    pipe.close()
+    cap_thread.join(timeout=2.0)
     if cfg.debug_view:
         cv2.destroyAllWindows()
 
