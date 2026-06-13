@@ -66,6 +66,21 @@ COLLECTIBLE = [
     ("emerald_ore", False),
 ]
 
+# MineSight 2.0 splits collection across two roles that both connect here:
+#   server (Folia plugin) — decides WHAT/WHERE to scan and how many to capture.
+#   client (Fabric)       — decides HOW each frame is rendered.
+# A connection's role comes from its collector_hello; a 1.8.9 mod sends none and
+# is treated as "legacy" (self-driving) and gets the whole settings blob.
+SERVER_FIELDS = {
+    "type", "output_dir", "target", "radius", "y_min", "y_max",
+    "negative_ratio", "hard_negative_ratio", "confuser_categories",
+    "avoid_revisits", "smart_targeting", "class_targets", "classes",
+}
+CLIENT_FIELDS = {
+    "type", "gamma_min", "gamma_max", "fov_min", "fov_max", "settle_ticks",
+    "classes",
+}
+
 
 class CollectorTab(QWidget):
     """Automated in-game dataset collection, orchestrating one or more game
@@ -361,30 +376,18 @@ class CollectorTab(QWidget):
                       if info["in_session"] and not info["done"]]
         if not in_session:
             return
-        per_client = math.ceil(self.target.value() / len(in_session))
-        update = {
-            "type": "collect_update",
-            "target": per_client,
-            "radius": self.radius.value(),
-            "y_min": self.y_min.value(),
-            "y_max": self.y_max.value(),
-            "gamma_min": self.gamma_min.value(),
-            "gamma_max": self.gamma_max.value(),
-            "fov_min": self.fov_min.value(),
-            "fov_max": self.fov_max.value(),
-            "negative_ratio": self.negatives.value(),
-            "hard_negative_ratio": self.hard_negatives.value(),
-            "confuser_categories": self._confuser_categories(),
-            "settle_ticks": self.settle.value(),
-            "avoid_revisits": self.skip_visited.isChecked(),
-            "smart_targeting": self.smart_targeting.isChecked(),
-            "class_targets": self._class_targets(len(in_session)),
-        }
-        for sock, _info in in_session:
-            sock.sendTextMessage(json.dumps(update))
-        self.progress.setMaximum(per_client * len(in_session))
+        legacy = [c for c in in_session if c[1]["role"] == "legacy"]
+        full = self._settings_dict("collect_update")
+        total = self.target.value()
+        for sock, info in in_session:
+            msg = self._route(full, info["role"])
+            if info["role"] == "legacy":
+                msg["target"] = math.ceil(total / max(1, len(legacy)))
+            sock.sendTextMessage(json.dumps(msg))
+        self.progress.setMaximum(total)
         self._update_progress()
-        self.log.append_line(f"[applied live to {len(in_session)} client(s)]")
+        roles = ", ".join(f"#{i['id']}:{i['role']}" for _, i in in_session)
+        self.log.append_line(f"[applied live → {roles}]")
 
     # --- connection handling -------------------------------------------------
 
@@ -441,6 +444,7 @@ class CollectorTab(QWidget):
         info = {
             "id": self._next_client_id, "saved": 0, "visited": 0,
             "done": False, "in_session": False, "remote": remote,
+            "role": "legacy",  # set from collector_hello (server / client / legacy)
         }
         self._next_client_id += 1
         self._clients[sock] = info
@@ -522,6 +526,45 @@ class CollectorTab(QWidget):
             if label in checked and spin.value() > 0
         }
 
+    def _settings_dict(self, msg_type: str, output_dir: str | None = None,
+                       classes: list[str] | None = None) -> dict:
+        """The full settings blob; callers route the role-appropriate subset."""
+        d = {
+            "type": msg_type,
+            "target": self.target.value(),
+            "radius": self.radius.value(),
+            "y_min": self.y_min.value(),
+            "y_max": self.y_max.value(),
+            "gamma_min": self.gamma_min.value(),
+            "gamma_max": self.gamma_max.value(),
+            "fov_min": self.fov_min.value(),
+            "fov_max": self.fov_max.value(),
+            "negative_ratio": self.negatives.value(),
+            "hard_negative_ratio": self.hard_negatives.value(),
+            "confuser_categories": self._confuser_categories(),
+            "settle_ticks": self.settle.value(),
+            "avoid_revisits": self.skip_visited.isChecked(),
+            "smart_targeting": self.smart_targeting.isChecked(),
+            "class_targets": self._class_targets(1),
+        }
+        if output_dir is not None:
+            d["output_dir"] = output_dir
+        if classes is not None:
+            d["classes"] = classes
+        return d
+
+    @staticmethod
+    def _route(full: dict, role: str) -> dict:
+        """Subset of the settings that belongs to a given connection role.
+        Legacy (1.8.9) mods self-drive and get the whole blob."""
+        if role == "server":
+            keys = SERVER_FIELDS
+        elif role == "client":
+            keys = CLIENT_FIELDS
+        else:
+            return dict(full)
+        return {k: v for k, v in full.items() if k in keys}
+
     def start_collection(self) -> None:
         if not self._clients or self._collecting:
             return
@@ -538,46 +581,29 @@ class CollectorTab(QWidget):
         self._session_classes = classes
 
         self._save_settings()
-        clients = list(self._clients.items())
-        per_client = math.ceil(self.target.value() / len(clients))
-        total = 0
-        for sock, info in clients:
+        conns = list(self._clients.items())
+        legacy = [c for c in conns if c[1]["role"] == "legacy"]
+        full = self._settings_dict("collect_start", output_dir=str(pool), classes=classes)
+        total = self.target.value()
+        for sock, info in conns:
             info.update(saved=0, visited=0, done=False, in_session=True, class_boxes={})
-            msg = {
-                "type": "collect_start",
-                "output_dir": str(pool),
-                "target": per_client,
-                "radius": self.radius.value(),
-                "y_min": self.y_min.value(),
-                "y_max": self.y_max.value(),
-                "gamma_min": self.gamma_min.value(),
-                "gamma_max": self.gamma_max.value(),
-                "fov_min": self.fov_min.value(),
-                "fov_max": self.fov_max.value(),
-                "negative_ratio": self.negatives.value(),
-                "hard_negative_ratio": self.hard_negatives.value(),
-                "confuser_categories": self._confuser_categories(),
-                "settle_ticks": self.settle.value(),
-                "avoid_revisits": self.skip_visited.isChecked(),
-                "smart_targeting": self.smart_targeting.isChecked(),
-                "class_targets": self._class_targets(len(clients)),
-                "classes": classes,
-                # Clients on other machines can't write to our disk; they
-                # stream the images back over the socket instead.
-                "upload": bool(info.get("remote")),
-            }
+            msg = self._route(full, info["role"])
+            if info["role"] == "legacy":
+                # legacy mods each self-drive a share of the total, writing locally
+                # or streaming back if remote.
+                msg["target"] = math.ceil(total / max(1, len(legacy)))
+                msg["upload"] = bool(info.get("remote"))
             sock.sendTextMessage(json.dumps(msg))
-            total += per_client
         self._collecting = True
         self._session_started = time.monotonic()
-        log.info("Collection started: dataset=%s target=%d clients=%d classes=%s",
-                 name, total, len(clients), classes)
+        roles = ", ".join(f"#{i['id']}:{i['role']}" for _, i in conns)
+        log.info("Collection started: dataset=%s target=%d conns=%s classes=%s",
+                 name, total, roles, classes)
         self.progress.setMaximum(total)
         self.progress.setValue(0)
         self._update_buttons()
         self.log.append_line(
-            f"[start: {name}, {total} images across {len(clients)} client(s) "
-            f"({per_client} each), classes={classes}]"
+            f"[start: {name}, target {total}, classes={classes} | {roles}]"
         )
 
     def stop_collection(self) -> None:
@@ -603,7 +629,10 @@ class CollectorTab(QWidget):
         cid = info["id"]
         msg_type = data.get("type")
         if msg_type == "collector_hello":
-            self.log.append_line(f"[client #{cid} ready in-game]")
+            info["role"] = data.get("role", "legacy")
+            who = data.get("client", info["role"])
+            self.log.append_line(f"[#{cid} ready in-game — role: {info['role']} ({who})]")
+            self._update_conn_status()
         elif msg_type == "collect_progress":
             info["saved"] = data.get("saved", info["saved"])
             info["visited"] = data.get("visited", info["visited"])

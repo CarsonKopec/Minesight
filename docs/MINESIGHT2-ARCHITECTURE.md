@@ -151,6 +151,13 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
   `HudRenderCallback`, rescaling capture-frame px → scaled GUI coords. F8 cycles
   `OverlayMode`, F9 sends `review_capture`. Reuses the existing engine protocol
   unchanged, so the Python side needs no edits.
+- ✅ **Collector dual-connect** — both halves connect to the GUI collector WS
+  (8766) and announce a role: the plugin (`GuiLink`, `role:server`) applies
+  scan settings (radius/ore/Y/target) to `FoliaOreLocator` + `CaptureSession`;
+  the client (`GuiUploader`, `role:client`) applies render settings
+  (gamma/fov/settle, varied per shot) in `CaptureManager`. The collector tab
+  routes each `collect_start`/`collect_update` field to the right role, so
+  **Apply live** retunes scan-on-plugin and render-on-client independently.
 - ⏳ **Phase 3 remainder**: world markers + radar (the 3D/minimap parts) — they
   need screen↔world unprojection and are the next slice.
 - ⏳ **Overlay still to verify in-game** (needs the engine running + a window

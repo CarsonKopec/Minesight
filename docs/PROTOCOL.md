@@ -104,6 +104,17 @@ in its own world); the GUI splits the total image target evenly and sends each
 client its own `collect_start`. Filenames carry a per-instance token, so
 parallel clients can write into the same pool safely.
 
+**Roles (2.0).** `collector_hello` may carry a `"role"`: `server` (the Folia
+plugin — decides what/where to scan + how many to capture) or `client` (the
+Fabric camera — decides how each frame is rendered). A 1.8.9 mod sends no role
+and is treated as `legacy` (self-driving, gets the whole blob). On
+`collect_start`/`collect_update` the GUI sends each connection only its fields:
+server gets `target, radius, y_min/max, negative_ratio, hard_negative_ratio,
+confuser_categories, avoid_revisits, smart_targeting, class_targets, classes,
+output_dir`; client gets `gamma_min/max, fov_min/max, settle_ticks, classes`.
+So **Apply live** retunes the scan on the plugin and the render on the camera,
+each from the next shot.
+
 GUI → mod:
 
 ```json

@@ -1,5 +1,7 @@
 package com.minesight.farm;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.bukkit.GameMode;
@@ -15,6 +17,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -40,6 +43,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
 
     private FoliaOreLocator locator;
     private volatile CaptureSession session;
+    private GuiLink guiLink;
 
     @Override
     public void onEnable() {
@@ -47,6 +51,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         getServer().getMessenger().registerIncomingPluginChannel(this, CHANNEL, this);
 
         locator = new FoliaOreLocator(this);
+        guiLink = new GuiLink(this);
 
         // Paper plugins don't support YAML command declarations; register the
         // command programmatically (callable from onEnable).
@@ -58,6 +63,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         // chunk gen+scan up to its in-flight budget) and advances any capture
         // session every tick.
         getServer().getGlobalRegionScheduler().runAtFixedRate(this, task -> {
+            guiLink.ensureConnected();
             if (locator.isRunning()) {
                 locator.pump();
             }
@@ -208,6 +214,67 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
                             + ore.label() + " @ " + ore.x() + "," + ore.y() + "," + ore.z()));
         }, null);
         return true;
+    }
+
+    // ---- GUI collector link (server-side settings) -------------------------
+
+    /** Called by {@link GuiLink} (WS thread) for collect_start / collect_update. */
+    void onCollectorSettings(JsonObject s, boolean start) {
+        getServer().getGlobalRegionScheduler().execute(this, () -> applyServerSettings(s, start));
+    }
+
+    /** Called by {@link GuiLink} (WS thread) for collect_stop. */
+    void onCollectorStop() {
+        getServer().getGlobalRegionScheduler().execute(this, () -> {
+            locator.stop();
+            CaptureSession s = session;
+            if (s != null) {
+                s.stop();
+                session = null;
+            }
+            getLogger().info("Collector: stopped by GUI.");
+        });
+    }
+
+    private void applyServerSettings(JsonObject s, boolean start) {
+        Player camera = getServer().getOnlinePlayers().stream().findFirst().orElse(null);
+        if (camera == null) {
+            getLogger().info("Collector settings received but no camera client is online yet.");
+            return;
+        }
+        int radius = Math.max(16, Math.min(512, optInt(s, "radius", 128)));
+        int yLo = optInt(s, "y_min", -64);
+        int yHi = optInt(s, "y_max", 72);
+        int target = optInt(s, "target", 0);
+        Set<String> wanted = parseClasses(s);
+        // Reading the camera's location must run on its region thread (Folia).
+        camera.getScheduler().run(this, t -> {
+            Location loc = camera.getLocation();
+            locator.clearResults();
+            locator.configure(loc.getWorld(), loc.getBlockX(), loc.getBlockZ(), radius, wanted, yLo, yHi);
+            locator.start();
+            if (start && target > 0 && (session == null || session.isDone())) {
+                session = new CaptureSession(this, locator, camera.getUniqueId(), target, true);
+            }
+            getLogger().info("Collector " + (start ? "start" : "live update") + ": radius "
+                    + radius + ", ore " + wanted + ", Y " + yLo + ".." + yHi
+                    + (start && target > 0 ? ", target " + target : ""));
+        }, null);
+    }
+
+    private static int optInt(JsonObject s, String key, int def) {
+        return s.has(key) && s.get(key).isJsonPrimitive() ? s.get(key).getAsInt() : def;
+    }
+
+    /** Ore labels from the settings' {@code classes} array, or all known ores. */
+    private static Set<String> parseClasses(JsonObject s) {
+        Set<String> out = new HashSet<>();
+        if (s.has("classes") && s.get("classes").isJsonArray()) {
+            for (JsonElement e : s.getAsJsonArray("classes")) {
+                out.add(e.getAsString());
+            }
+        }
+        return out.isEmpty() ? OreCatalog.labels() : out;
     }
 
     // ---- plugin-channel transport -----------------------------------------

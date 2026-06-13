@@ -1,5 +1,6 @@
 package com.minesight.client.capture;
 
+import com.google.gson.JsonObject;
 import com.minesight.client.net.FarmPayload;
 import com.minesight.client.net.FarmProtocol;
 import com.minesight.client.net.GuiUploader;
@@ -51,17 +52,49 @@ public final class CaptureManager {
 
     private final MinecraftClient mc;
     private final DatasetWriter writer;
-    private final GuiUploader uploader = new GuiUploader();
+    private final GuiUploader uploader = new GuiUploader(this::onSettings);
+
+    // Render settings from the GUI collector, applied per shot for data
+    // diversity. Sentinels mean "leave the option alone". Set off-thread by
+    // onSettings; read + applied on the client thread.
+    private volatile double gammaMin = -1, gammaMax = -1;  // < 0 = don't touch gamma
+    private volatile int fovMin = -1, fovMax = -1;          // <= 0 = use current FOV
+    private volatile int settleTicks = SETTLE_TICKS;
 
     // Pending request state (client-thread only).
     private FarmProtocol.CaptureRequest pending;
     private int waited;
     private boolean prevHudHidden;
     private boolean hudHiddenByUs;
+    private double prevGamma;
+    private boolean gammaSetByUs;
+    private int prevFov;
+    private boolean fovSetByUs;
 
     public CaptureManager(MinecraftClient mc) {
         this.mc = mc;
         this.writer = new DatasetWriter(new File(mc.runDirectory, "minesight/captures"));
+    }
+
+    /** GUI collector settings (uploader thread): store ranges; applied per shot. */
+    private void onSettings(JsonObject s) {
+        if (s.has("gamma_min")) {
+            gammaMin = s.get("gamma_min").getAsDouble();
+        }
+        if (s.has("gamma_max")) {
+            gammaMax = s.get("gamma_max").getAsDouble();
+        }
+        if (s.has("fov_min")) {
+            fovMin = s.get("fov_min").getAsInt();
+        }
+        if (s.has("fov_max")) {
+            fovMax = s.get("fov_max").getAsInt();
+        }
+        if (s.has("settle_ticks")) {
+            settleTicks = Math.max(1, s.get("settle_ticks").getAsInt());
+        }
+        LOG.info("Render settings: gamma {}..{}, fov {}..{}, settle {}",
+                gammaMin, gammaMax, fovMin, fovMax, settleTicks);
     }
 
     /** Client-thread: accept a new capture request (replaces any in flight). */
@@ -74,7 +107,28 @@ public final class CaptureManager {
             this.hudHiddenByUs = true;
             mc.options.hudHidden = true;
         }
+        applyRenderSettings();  // pick gamma/fov for this shot; settle lets it render
         LOG.info("Capture {} requested: {} ore box(es)", req.shotId(), req.boxes().size());
+    }
+
+    /** Client thread: roll a random gamma/fov in the configured ranges. */
+    private void applyRenderSettings() {
+        if (gammaMin >= 0 && gammaMax >= gammaMin) {
+            double g = gammaMin + Math.random() * (gammaMax - gammaMin);
+            if (!gammaSetByUs) {
+                prevGamma = mc.options.getGamma().getValue();
+                gammaSetByUs = true;
+            }
+            mc.options.getGamma().setValue(g);
+        }
+        if (fovMin > 0 && fovMax >= fovMin) {
+            int f = fovMin + (int) Math.round(Math.random() * (fovMax - fovMin));
+            if (!fovSetByUs) {
+                prevFov = mc.options.getFov().getValue();
+                fovSetByUs = true;
+            }
+            mc.options.getFov().setValue(f);
+        }
     }
 
     /** Client-thread tick: settle, then capture once the view is ready. */
@@ -84,11 +138,11 @@ public final class CaptureManager {
         }
         waited++;
         boolean ready = mc.world != null && mc.gameRenderer.getCamera() != null;
-        if (ready && waited >= SETTLE_TICKS) {
+        if (ready && waited >= settleTicks) {
             doCapture();
             return;
         }
-        if (waited >= TIMEOUT_TICKS) {
+        if (waited >= Math.max(TIMEOUT_TICKS, settleTicks + 60)) {
             FarmProtocol.CaptureRequest req = pending;
             pending = null;
             LOG.warn("Capture {} timed out before the view was ready", req.shotId());
@@ -197,6 +251,14 @@ public final class CaptureManager {
         if (hudHiddenByUs) {
             mc.options.hudHidden = prevHudHidden;
             hudHiddenByUs = false;
+        }
+        if (gammaSetByUs) {
+            mc.options.getGamma().setValue(prevGamma);
+            gammaSetByUs = false;
+        }
+        if (fovSetByUs) {
+            mc.options.getFov().setValue(prevFov);
+            fovSetByUs = false;
         }
         if (ClientPlayNetworking.canSend(FarmPayload.ID)) {
             ClientPlayNetworking.send(new FarmPayload(

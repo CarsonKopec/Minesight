@@ -1,5 +1,7 @@
 package com.minesight.client.net;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,12 +13,17 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
- * Streams captured frames to the Python Control Panel's collector WebSocket
- * (default {@code ws://127.0.0.1:8766}, override with {@code -Dminesight.guiUrl}),
- * reusing the existing {@code collect_image} protocol so the GUI stores them in
- * its dataset pool - the same path the 1.8.9 remote clients used.
+ * The client's link to the Python Control Panel's collector WebSocket (default
+ * {@code ws://127.0.0.1:8766}, override with {@code -Dminesight.guiUrl}).
+ *
+ * <p>Outbound: streams captured frames as {@code collect_image} (the same path
+ * the 1.8.9 remote clients used) so the GUI stores them in its dataset pool.
+ * Inbound: receives {@code collect_start}/{@code collect_update} and forwards the
+ * client-side render settings (gamma/fov/settle) to a listener. It announces
+ * {@code role:client} in its hello so the GUI routes only client fields here.
  *
  * <p>Uses the JDK's built-in {@link WebSocket} (no shaded library). Connection is
  * lazy + best-effort with a retry cooldown; if it isn't connected the caller just
@@ -29,6 +36,7 @@ public final class GuiUploader {
     private static final long RETRY_COOLDOWN_MS = 5_000;
 
     private final String url;
+    private final Consumer<JsonObject> onSettings;
     private final HttpClient http = HttpClient.newHttpClient();
     private final ExecutorService sender = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "minesight-uploader");
@@ -40,8 +48,11 @@ public final class GuiUploader {
     private volatile boolean connecting;
     private volatile long lastAttempt;
 
-    public GuiUploader() {
+    /** @param onSettings called (off the client thread) with each collect_start /
+     *                    collect_update; may be null if settings aren't consumed. */
+    public GuiUploader(Consumer<JsonObject> onSettings) {
         this.url = System.getProperty("minesight.guiUrl", "ws://127.0.0.1:8766");
+        this.onSettings = onSettings;
     }
 
     public boolean isConnected() {
@@ -68,7 +79,7 @@ public final class GuiUploader {
                     } else {
                         ws = socket;
                         LOG.info("GUI upload: connected to {}", url);
-                        send("{\"type\":\"collector_hello\",\"client\":\"fabric-2.0\"}");
+                        send("{\"type\":\"collector_hello\",\"role\":\"client\",\"client\":\"fabric-2.0\"}");
                     }
                 });
     }
@@ -129,7 +140,24 @@ public final class GuiUploader {
         return b.append('"').toString();
     }
 
+    private void handle(String message) {
+        if (onSettings == null) {
+            return;
+        }
+        try {
+            JsonObject obj = JsonParser.parseString(message).getAsJsonObject();
+            String type = obj.has("type") ? obj.get("type").getAsString() : "";
+            if ("collect_start".equals(type) || "collect_update".equals(type)) {
+                onSettings.accept(obj);
+            }
+        } catch (Exception ignored) {
+            // not JSON we care about
+        }
+    }
+
     private final class Listener implements WebSocket.Listener {
+        private final StringBuilder rx = new StringBuilder();
+
         @Override
         public void onOpen(WebSocket webSocket) {
             webSocket.request(1);
@@ -137,7 +165,13 @@ public final class GuiUploader {
 
         @Override
         public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-            webSocket.request(1);  // GUI may send collect_start etc.; the plugin drives us, so ignore
+            rx.append(data);
+            if (last) {
+                String msg = rx.toString();
+                rx.setLength(0);
+                handle(msg);
+            }
+            webSocket.request(1);
             return null;
         }
 
