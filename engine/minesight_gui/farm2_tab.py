@@ -93,6 +93,14 @@ class Farm2Tab(QWidget):
         self.server_addr = QLineEdit(self.settings.value("farm2/serverAddr", "localhost"))
         self.server_addr.setToolTip("Address the clients auto-join (host or host:port).")
         crow.addWidget(self.server_addr, 1)
+        self.test_btn = QPushButton("🎯 Test client")
+        self.test_btn.setToolTip(
+            "Launch a single client in client/run for testing - watch the live\n"
+            "detection overlay, or eyeball capture. Auto-joins if the box above is\n"
+            "ticked. Runs alongside the farm clients (its own run dir)."
+        )
+        self.test_btn.clicked.connect(self.launch_test_client)
+        crow.addWidget(self.test_btn)
         self.launch_btn = QPushButton("🚀 Launch clients")
         self.launch_btn.clicked.connect(self.launch_clients)
         crow.addWidget(self.launch_btn)
@@ -190,7 +198,22 @@ class Farm2Tab(QWidget):
         if not self._launch_queue:
             self._launch_timer.stop()
 
-    def _on_client_exit(self, idx: int, code: int) -> None:
+    def launch_test_client(self) -> None:
+        """One client in the default client/run dir for testing (overlay /
+        capture). Its own run dir + project cache so it coexists with the farm."""
+        args = ["/c", "gradlew.bat", "runClient", "--console=plain"]
+        if self.autojoin.isChecked() and self.server_addr.text().strip():
+            args.append(f"-Pminesight.server={self.server_addr.text().strip()}")
+        proc = ManagedProcess(self)
+        proc.line.connect(lambda ln: self.log.append_line(f"[test] {ln}"))
+        proc.started.connect(self._update_running)
+        proc.finished.connect(lambda code: self._on_client_exit("test", code))
+        proc.start("cmd.exe", args, str(CLIENT_DIR))
+        self._client_procs.append((0, proc))
+        self.log.append_line("[test client starting → client/run]")
+        self._update_running()
+
+    def _on_client_exit(self, idx, code: int) -> None:
         self.log.append_line(f"[client {idx} exited ({code})]")
         self._update_running()
 
