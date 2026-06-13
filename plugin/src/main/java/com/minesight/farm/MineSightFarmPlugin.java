@@ -1,9 +1,9 @@
 package com.minesight.farm;
 
+import io.papermc.paper.command.brigadier.BasicCommand;
+import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -34,7 +34,7 @@ import java.util.Set;
  * <p>The {@code /minesightfarm} command exercises the scan + teleport path
  * in-game without needing the Python control panel.
  */
-public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageListener, CommandExecutor {
+public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageListener, BasicCommand {
 
     public static final String CHANNEL = "minesight:farm";
 
@@ -48,9 +48,11 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
 
         locator = new FoliaOreLocator(this);
 
-        if (getCommand("minesightfarm") != null) {
-            getCommand("minesightfarm").setExecutor(this);
-        }
+        // Paper plugins don't support YAML command declarations; register the
+        // command programmatically (callable from onEnable).
+        registerCommand("minesightfarm",
+                "Control the MineSight dataset farm (regionized ore scan + teleport).",
+                List.of("msf"), this);
 
         // Folia global-region heartbeat: pumps the ore scanner (launches async
         // chunk gen+scan up to its in-flight budget) and advances any capture
@@ -81,25 +83,21 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         getServer().getMessenger().unregisterOutgoingPluginChannel(this);
     }
 
-    // ---- /minesightfarm command -------------------------------------------
+    // ---- /minesightfarm command (Paper BasicCommand) -----------------------
 
     @Override
-    public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
-                             @NotNull String label, @NotNull String[] args) {
+    public void execute(@NotNull CommandSourceStack source, @NotNull String[] args) {
+        CommandSender sender = source.getSender();
         if (args.length == 0) {
             sender.sendMessage("Usage: /minesightfarm <scan <ore> [radius] | capture [count] | status | tp | stop>");
-            return true;
+            return;
         }
         switch (args[0].toLowerCase()) {
-            case "scan":
-                return cmdScan(sender, args);
-            case "capture":
-                return cmdCapture(sender, args);
-            case "status":
-                return cmdStatus(sender);
-            case "tp":
-                return cmdTeleport(sender);
-            case "stop":
+            case "scan" -> cmdScan(sender, args);
+            case "capture" -> cmdCapture(sender, args);
+            case "status" -> cmdStatus(sender);
+            case "tp" -> cmdTeleport(sender);
+            case "stop" -> {
                 locator.stop();
                 CaptureSession s = session;
                 if (s != null) {
@@ -107,10 +105,8 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
                     session = null;
                 }
                 sender.sendMessage("MineSight: scan + capture stopped.");
-                return true;
-            default:
-                sender.sendMessage("Unknown subcommand: " + args[0]);
-                return true;
+            }
+            default -> sender.sendMessage("Unknown subcommand: " + args[0]);
         }
     }
 

@@ -5,8 +5,6 @@ api-version: '1.21'
 folia-supported: true
 description: Server-side ore scanning, spectator teleporting, and capture orchestration for the MineSight dataset farm.
 authors: [kopec]
-commands:
-  minesightfarm:
-    description: Control the MineSight dataset farm (regionized ore scan + teleport).
-    usage: /minesightfarm <scan <ore> [radius] | capture [count] | status | tp | stop>
-    aliases: [msf]
+# Paper plugins do not support YAML command declarations - the /minesightfarm
+# command (alias /msf) is registered in MineSightFarmPlugin#onEnable via
+# JavaPlugin#registerCommand.
