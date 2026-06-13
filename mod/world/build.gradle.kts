@@ -5,6 +5,7 @@ plugins {
     java
     id("gg.essential.loom") version "0.10.0.+"
     id("dev.architectury.architectury-pack200") version "0.1.3"
+    id("com.github.johnrengelman.shadow") version "7.1.2"
 }
 
 val baseGroup: String by project
@@ -48,14 +49,22 @@ repositories {
     maven("https://pkgs.dev.azure.com/djtheredstoner/DevAuth/_packaging/public/maven/v1")
 }
 
+val shadowImpl: Configuration by configurations.creating {
+    configurations.implementation.get().extendsFrom(this)
+}
+
 dependencies {
     minecraft("com.mojang:minecraft:1.8.9")
     mappings("de.oceanlabs.mcp:mcp_stable:22-1.8.9")
     forge("net.minecraftforge:forge:1.8.9-11.15.1.2318-1.8.9")
 
-    implementation(project(":core"))
-    // World needs Detection at runtime (it reads the detection-populated store),
-    // so a `:world:runClient` dev launch loads the full play experience.
+    // Shared library + WebSocket are compiled into this mod's jar.
+    shadowImpl(project(":core"))
+    shadowImpl("org.java-websocket:Java-WebSocket:1.5.7")
+
+    // Detection is a separate runtime mod (it populates the shared store). Not
+    // shaded - just on the classpath so a `:world:runClient` dev launch loads
+    // the detection mod too. In production the user installs both jars.
     implementation(project(":detection"))
 
     runtimeOnly("me.djtheredstoner:DevAuth-forge-legacy:1.2.1")
@@ -85,12 +94,25 @@ tasks.processResources {
     }
 }
 
-tasks.jar {
-    archiveClassifier.set("dev")
-}
-
-tasks.named<net.fabricmc.loom.task.RemapJarTask>("remapJar") {
+val remapJar by tasks.named<net.fabricmc.loom.task.RemapJarTask>("remapJar") {
     archiveClassifier.set("")
+    from(tasks.shadowJar)
+    input.set(tasks.shadowJar.get().archiveFile)
 }
 
-tasks.assemble.get().dependsOn(tasks.named("remapJar"))
+tasks.jar {
+    archiveClassifier.set("without-deps")
+    destinationDirectory.set(layout.buildDirectory.dir("intermediates"))
+}
+
+tasks.shadowJar {
+    destinationDirectory.set(layout.buildDirectory.dir("intermediates"))
+    archiveClassifier.set("non-obfuscated-with-deps")
+    configurations = listOf(shadowImpl)
+    // Relocate only third-party libs; keep com.minesight.* un-relocated so the
+    // shared DetectionStore singleton resolves to one class across mods.
+    relocate("org.java_websocket", "$baseGroup.deps.websocket")
+    relocate("org.slf4j", "$baseGroup.deps.slf4j")
+}
+
+tasks.assemble.get().dependsOn(tasks.remapJar)

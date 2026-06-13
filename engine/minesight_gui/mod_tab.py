@@ -114,8 +114,9 @@ class ModTab(QWidget):
 
     # --- build / install ------------------------------------------------------
 
-    # The four module jars (final remapped output), one per subproject.
-    _MODULES = ("core", "detection", "world", "collector")
+    # Installable feature mods (core is a shared library shaded into each, not
+    # a standalone mod jar).
+    _MODULES = ("detection", "world", "collector")
 
     def _module_jars(self) -> list[Path]:
         jars = []
@@ -134,7 +135,7 @@ class ModTab(QWidget):
         if jars:
             newest = max(j.stat().st_mtime for j in jars)
             built = time.strftime("%Y-%m-%d %H:%M", time.localtime(newest))
-            return f"{len(jars)}/4 module jars built (latest {built})"
+            return f"{len(jars)}/3 mod jars built (latest {built})"
         return "No jars built yet."
 
     def _build(self) -> None:
@@ -163,8 +164,6 @@ class ModTab(QWidget):
         names = ", ".join(j.name for j in jars)
         self.status.setText(f"Installed {len(jars)} jar(s) → {target}")
         self.log.append_line(f"[installed to {target}: {names}]")
-        if len(jars) < 4:
-            self.log.append_line("[note: core is required; build all four with the Build button]")
 
     def _on_line(self, line: str) -> None:
         self.log.append_line(line)

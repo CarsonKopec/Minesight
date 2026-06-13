@@ -22,7 +22,7 @@ import org.lwjgl.input.Keyboard;
  * core and detection.
  */
 @Mod(modid = MineSightWorld.MODID, useMetadata = true,
-        dependencies = "required-after:minesightcore;required-after:minesightdetection")
+        dependencies = "required-after:minesightdetection")
 public class MineSightWorld {
     public static final String MODID = "minesightworld";
 

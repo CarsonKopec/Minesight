@@ -19,8 +19,7 @@ import java.util.List;
  * driven by the Control Panel. Independent of the detection overlay — a farm
  * machine loads just core + this.
  */
-@Mod(modid = MineSightCollector.MODID, useMetadata = true,
-        dependencies = "required-after:minesightcore")
+@Mod(modid = MineSightCollector.MODID, useMetadata = true)
 public class MineSightCollector {
     public static final String MODID = "minesightcollector";
 

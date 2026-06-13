@@ -22,8 +22,7 @@ import java.net.URI;
  * overlay-mode (F8) and review-capture (F9) keybinds. Detection work happens in
  * the engine; this never scans the world itself.
  */
-@Mod(modid = MineSightDetection.MODID, useMetadata = true,
-        dependencies = "required-after:minesightcore")
+@Mod(modid = MineSightDetection.MODID, useMetadata = true)
 public class MineSightDetection {
     public static final String MODID = "minesightdetection";
 

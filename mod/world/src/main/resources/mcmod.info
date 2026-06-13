@@ -6,7 +6,7 @@
     "version": "${version}",
     "mcversion": "${mcversion}",
     "authorList": ["kopec"],
-    "dependencies": ["minesightcore", "minesightdetection"],
-    "requiredMods": ["minesightcore", "minesightdetection"]
+    "dependencies": ["minesightdetection"],
+    "requiredMods": ["minesightdetection"]
   }
 ]
