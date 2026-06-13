@@ -1,9 +1,9 @@
 # MineSight — Vision-Augmented Minecraft
 
-Real-time AI perception for Minecraft, per [MineSight_Spec.pdf](MineSight_Spec.pdf).
+Real-time AI perception for Minecraft, per [MineSight_Spec.pdf](docs/MineSight_Spec.pdf).
 A Python ML engine captures the Minecraft window, runs **YOLO26s** ore detection on
 the GPU, and streams results over a WebSocket to a lightweight **Forge 1.8.9** client
-mod that renders them as 2D overlays. The mod performs **no detection itself**.
+mod that renders them as overlays. The mod performs **no detection itself**.
 
 ```
 ┌─────────────────────┐   player state (JSON)   ┌──────────────────────┐
@@ -13,8 +13,9 @@ mod that renders them as 2D overlays. The mod performs **no detection itself**.
         ws://127.0.0.1:8765  (mod = client, engine = server)
 ```
 
-**Current status: Phase 1 — Basic Detection** (capture → inference → WebSocket → 2D boxes).
-Later phases (tracking, memory, 3D mapping, radar) are scoped in the spec.
+**Status: all spec phases (1–5) complete** — detection, tracking, ore memory,
+3D world markers, and radar/suggestions. See the roadmap at the bottom and the
+ongoing quality backlog in [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
 
 ## Repository layout
 
@@ -26,8 +27,10 @@ Later phases (tracking, memory, 3D mapping, radar) are scoped in the spec.
 | `engine/tests/` | pytest suite for the data pipeline — `cd engine && python -m pytest` |
 | `mod/` | Forge 1.8.9 client mod (modern Gradle via Essential's architectury-loom) |
 | `MineSight-GUI.bat` | Double-click launcher for the Control Panel |
-| `PROTOCOL.md` | WebSocket JSON protocol reference |
-| `docs/spec-extract.txt` | Plain-text extraction of the spec PDF |
+| `MineSight-Farm.bat` | Launcher for remote collection-farm machines |
+| `docs/PROTOCOL.md` | WebSocket JSON protocol reference |
+| `docs/IMPROVEMENTS.md` | Quality/robustness backlog |
+| `docs/MineSight_Spec.pdf` · `docs/spec-extract.txt` | Original spec + text extraction |
 
 ## Control Panel GUI
 

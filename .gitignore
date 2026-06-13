@@ -2,6 +2,7 @@
 engine/.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Model weights & training output
 *.pt
