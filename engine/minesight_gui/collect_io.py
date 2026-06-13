@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import random
 import shutil
+from collections import Counter
 from pathlib import Path
 
 import yaml
 
 from .constants import DATASETS_DIR
+
+SPLITS = ("train", "valid", "test")
+IMG_EXTS = (".png", ".jpg", ".jpeg")
 
 
 def pool_dir(session_name: str) -> Path:
@@ -161,3 +165,98 @@ def merge_into(src_ds: Path, dst_ds: Path) -> int:
                 "\n".join(lines_out) + ("\n" if lines_out else "")
             )
     return copied
+
+
+def _label_classes(label_path: Path) -> set[int]:
+    if not label_path.exists():
+        return set()
+    out = set()
+    for line in label_path.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) == 5:
+            out.add(int(parts[0]))
+    return out
+
+
+def rebalance_splits(ds_dir: Path, train: float = 0.8, valid: float = 0.1,
+                     test: float = 0.1, seed: int = 42) -> dict[str, int]:
+    """Pool every image across train/valid/test and re-split, stratified so each
+    class (and background) is spread proportionally across the three splits.
+
+    Returns the new per-split image counts. data.yaml is left untouched.
+    """
+    total = train + valid + test
+    train, valid, test = train / total, valid / total, test / total
+
+    # Gather every (image, label) pair across the existing splits.
+    items: list[tuple[Path, Path]] = []
+    for split in SPLITS:
+        img_dir = ds_dir / split / "images"
+        if not img_dir.exists():
+            continue
+        for img in img_dir.iterdir():
+            if img.suffix.lower() in IMG_EXTS:
+                items.append((img, ds_dir / split / "labels" / (img.stem + ".txt")))
+    if not items:
+        raise ValueError("No images found in this dataset.")
+
+    # Global class frequency, to stratify by the RAREST class in each image -
+    # this is what guarantees scarce classes still land in valid/test.
+    global_count: Counter = Counter()
+    for _img, lbl in items:
+        global_count.update(_label_classes(lbl))
+
+    def group_key(label_path: Path) -> str:
+        classes = _label_classes(label_path)
+        if not classes:
+            return "__background__"
+        return str(min(classes, key=lambda c: (global_count[c], c)))
+
+    groups: dict[str, list[tuple[Path, Path]]] = {}
+    for item in items:
+        groups.setdefault(group_key(item[1]), []).append(item)
+
+    rng = random.Random(seed)
+    assignment: dict[str, str] = {}  # stem -> split
+    for members in groups.values():
+        rng.shuffle(members)
+        n = len(members)
+        n_train = round(n * train)
+        n_valid = round(n * valid)
+        # Make sure tiny groups still seed valid/test when there's enough.
+        if n >= 3:
+            n_train = min(n_train, n - 2)
+            n_valid = max(1, n_valid)
+        for i, (img, _lbl) in enumerate(members):
+            if i < n_train:
+                assignment[img.stem] = "train"
+            elif i < n_train + n_valid:
+                assignment[img.stem] = "valid"
+            else:
+                assignment[img.stem] = "test"
+
+    # Stage everything flat, then redistribute - bulletproof against any
+    # cross-split filename overlap and partial failure.
+    staging = ds_dir / "_rebalance_tmp"
+    if staging.exists():
+        shutil.rmtree(staging)
+    (staging / "images").mkdir(parents=True)
+    (staging / "labels").mkdir(parents=True)
+    for img, lbl in items:
+        shutil.move(str(img), staging / "images" / img.name)
+        if lbl.exists():
+            shutil.move(str(lbl), staging / "labels" / lbl.name)
+
+    counts = {s: 0 for s in SPLITS}
+    for split in SPLITS:
+        (ds_dir / split / "images").mkdir(parents=True, exist_ok=True)
+        (ds_dir / split / "labels").mkdir(parents=True, exist_ok=True)
+    for img in list((staging / "images").iterdir()):
+        split = assignment.get(img.stem, "train")
+        shutil.move(str(img), ds_dir / split / "images" / img.name)
+        lbl = staging / "labels" / (img.stem + ".txt")
+        if lbl.exists():
+            shutil.move(str(lbl), ds_dir / split / "labels" / lbl.name)
+        counts[split] += 1
+    shutil.rmtree(staging, ignore_errors=True)
+    return counts

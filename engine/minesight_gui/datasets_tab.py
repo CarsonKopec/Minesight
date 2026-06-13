@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from pathlib import Path
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QListWidget,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QTableWidget,
@@ -17,11 +20,15 @@ from PySide6.QtWidgets import (
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+from . import collect_io
+from .constants import DATASETS_DIR
 from .health import DatasetHealth, SPLITS, analyze, list_datasets
 
 
 class DatasetsTab(QWidget):
     """Dataset browser with class balance and labeling-bug warnings."""
+
+    datasetsChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -36,6 +43,15 @@ class DatasetsTab(QWidget):
         self.listw = QListWidget()
         self.listw.currentTextChanged.connect(self._show_dataset)
         lv.addWidget(self.listw)
+        self.rebalance_btn = QPushButton("⚖ Rebalance splits")
+        self.rebalance_btn.setToolTip(
+            "Pool every image in this dataset and re-split 80/10/10, stratified so\n"
+            "each class (and background) is spread proportionally across\n"
+            "train/valid/test. Fixes drift from appended data and rare classes\n"
+            "that ended up with too few validation samples."
+        )
+        self.rebalance_btn.clicked.connect(self._rebalance)
+        lv.addWidget(self.rebalance_btn)
         refresh = QPushButton("⟳ Refresh")
         refresh.clicked.connect(self.refresh)
         lv.addWidget(refresh)
@@ -83,6 +99,33 @@ class DatasetsTab(QWidget):
             if ds.name == name:
                 self._render(analyze(ds))
                 return
+
+    def _rebalance(self) -> None:
+        item = self.listw.currentItem()
+        if item is None:
+            return
+        name = item.text()
+        ds_dir = DATASETS_DIR / name
+        reply = QMessageBox.question(
+            self, "Rebalance splits",
+            f"Re-split every image in '{name}' into a fresh 80/10/10 "
+            "train/valid/test, stratified by class?\n\n"
+            "Files are moved between splits in place (labels follow their images).",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            counts = collect_io.rebalance_splits(ds_dir)
+        except Exception as e:
+            QMessageBox.warning(self, "MineSight", str(e))
+            return
+        QMessageBox.information(
+            self, "Rebalance splits",
+            f"Done: train {counts['train']}, valid {counts['valid']}, test {counts['test']}.",
+        )
+        self._show_dataset(name)
+        self.datasetsChanged.emit()
 
     def _render(self, h: DatasetHealth) -> None:
         self.warnings.setText(

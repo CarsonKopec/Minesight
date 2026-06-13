@@ -70,6 +70,8 @@ class MainWindow(QMainWindow):
         self.collector_tab.datasetsChanged.connect(self.review_tab.refresh_targets)
         self.review_tab.datasetsChanged.connect(self.datasets_tab.refresh)
         self.engine_tab.reviewCaptured.connect(self.review_tab.refresh)
+        self.datasets_tab.datasetsChanged.connect(self.training_tab.refresh_datasets)
+        self.datasets_tab.datasetsChanged.connect(self.models_tab.refresh)
 
         # Status bar: engine stats + GPU
         self.engine_status = QLabel("engine: stopped")
