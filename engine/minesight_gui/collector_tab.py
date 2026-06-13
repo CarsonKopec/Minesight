@@ -158,6 +158,15 @@ class CollectorTab(QWidget):
             "frames that come back black or featureless."
         )
         grid.addWidget(self.settle, 2, 3)
+        grid.addWidget(QLabel("Hard negatives:"), 2, 4)
+        self.hard_negatives = QDoubleSpinBox(minimum=0.0, maximum=0.6, value=0.0, singleStep=0.05)
+        self.hard_negatives.setToolTip(
+            "Fraction of attempts that surface and photograph CONFUSER blocks -\n"
+            "flowers (poppies!), mushrooms, redstone torches/blocks/dust, pumpkins,\n"
+            "cacti - saved with empty labels so the model learns these are NOT ore.\n"
+            "The direct fix for 'red flowers detected as redstone'. Try 0.2-0.3."
+        )
+        grid.addWidget(self.hard_negatives, 2, 5)
         classes_label = QLabel("Classes (+ box goals):")
         classes_label.setToolTip(
             "Tick the ores to photograph. The number next to each is an optional\n"
@@ -255,7 +264,7 @@ class CollectorTab(QWidget):
     # --- settings persistence --------------------------------------------------
 
     _SPINS = ("target", "radius", "y_min", "y_max", "gamma_min", "gamma_max",
-              "fov_min", "fov_max", "negatives", "settle")
+              "fov_min", "fov_max", "negatives", "hard_negatives", "settle")
 
     def _save_settings(self) -> None:
         s = QSettings("MineSight", "ControlPanel")
@@ -312,6 +321,7 @@ class CollectorTab(QWidget):
             "fov_min": self.fov_min.value(),
             "fov_max": self.fov_max.value(),
             "negative_ratio": self.negatives.value(),
+            "hard_negative_ratio": self.hard_negatives.value(),
             "settle_ticks": self.settle.value(),
             "avoid_revisits": self.skip_visited.isChecked(),
             "class_targets": self._class_targets(len(in_session)),
@@ -488,6 +498,7 @@ class CollectorTab(QWidget):
                 "fov_min": self.fov_min.value(),
                 "fov_max": self.fov_max.value(),
                 "negative_ratio": self.negatives.value(),
+                "hard_negative_ratio": self.hard_negatives.value(),
                 "settle_ticks": self.settle.value(),
                 "avoid_revisits": self.skip_visited.isChecked(),
                 "class_targets": self._class_targets(len(clients)),

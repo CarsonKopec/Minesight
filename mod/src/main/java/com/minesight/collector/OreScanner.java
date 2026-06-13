@@ -7,6 +7,7 @@ import net.minecraft.world.World;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -14,6 +15,13 @@ import java.util.Set;
 /** Finds ore blocks in loaded chunks and maps them to dataset class labels. */
 public final class OreScanner {
     private static final Map<Block, String> ORE_LABELS = new HashMap<Block, String>();
+
+    /**
+     * Blocks that look enough like ore to fool the model (reddish/colorful
+     * clusters) - photographed as empty-label HARD NEGATIVES so it learns to
+     * NOT fire on them. Mostly surface decoration plus redstone fixtures.
+     */
+    private static final Set<Block> CONFUSERS = new HashSet<Block>();
 
     /** Vanilla 1.8.9 spawn bands; teleport Y is sampled inside these. */
     private static final Map<String, int[]> Y_BANDS = new HashMap<String, int[]>();
@@ -37,6 +45,22 @@ public final class OreScanner {
         Y_BANDS.put("iron_ore", new int[]{2, 64});
         Y_BANDS.put("coal_ore", new int[]{5, 128});
         Y_BANDS.put("quartz_ore", new int[]{10, 118});
+
+        CONFUSERS.add(Blocks.red_flower);            // poppy, tulips, orchid, allium...
+        CONFUSERS.add(Blocks.yellow_flower);         // dandelion
+        CONFUSERS.add(Blocks.double_plant);          // rose bush, sunflower, peony, lilac
+        CONFUSERS.add(Blocks.red_mushroom);
+        CONFUSERS.add(Blocks.brown_mushroom);
+        CONFUSERS.add(Blocks.red_mushroom_block);
+        CONFUSERS.add(Blocks.brown_mushroom_block);
+        CONFUSERS.add(Blocks.redstone_torch);        // bright red, classic false positive
+        CONFUSERS.add(Blocks.unlit_redstone_torch);
+        CONFUSERS.add(Blocks.redstone_block);
+        CONFUSERS.add(Blocks.redstone_wire);
+        CONFUSERS.add(Blocks.pumpkin);
+        CONFUSERS.add(Blocks.lit_pumpkin);
+        CONFUSERS.add(Blocks.melon_block);
+        CONFUSERS.add(Blocks.cactus);
     }
 
     private OreScanner() {
@@ -44,6 +68,22 @@ public final class OreScanner {
 
     public static String labelFor(Block block) {
         return ORE_LABELS.get(block);
+    }
+
+    /** Positions of confuser (hard-negative) blocks within a cubic radius. */
+    public static List<BlockPos> scanConfusers(World world, BlockPos center, int radius) {
+        List<BlockPos> out = new ArrayList<BlockPos>();
+        if (world.getChunkFromBlockCoords(center).isEmpty()) return out;
+        int yLo = Math.max(1, center.getY() - radius);
+        int yHi = Math.min(255, center.getY() + radius);
+        BlockPos from = new BlockPos(center.getX() - radius, yLo, center.getZ() - radius);
+        BlockPos to = new BlockPos(center.getX() + radius, yHi, center.getZ() + radius);
+        for (BlockPos pos : BlockPos.getAllInBox(from, to)) {
+            if (CONFUSERS.contains(world.getBlockState(pos).getBlock())) {
+                out.add(pos);
+            }
+        }
+        return out;
     }
 
     /** Spawn Y band for a class label, or null if unknown. */

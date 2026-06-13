@@ -60,6 +60,7 @@ public class CollectorController {
     private int shotsAtSpot;
     private int dryAttempts;     // targets since the last successful save
     private String targetLabel;  // class of the aimed ore
+    private boolean huntingConfusers;  // this attempt seeks surface hard negatives
     /** Saved BOXES per class this session - drives balance and class targets. */
     private final java.util.Map<String, Integer> sessionClassCounts =
             new java.util.HashMap<String, Integer>();
@@ -239,7 +240,11 @@ public class CollectorController {
                 }
                 break;
             case FIND_CAVE:
-                findCave();
+                if (huntingConfusers) {
+                    findSurface();
+                } else {
+                    findCave();
+                }
                 break;
             case RENDER_WAIT:
                 waitTicks++;
@@ -316,9 +321,36 @@ public class CollectorController {
             Integer fails = barrenRegions.get(regionKey(x, z));
             if (fails == null || fails < BARREN_THRESHOLD) break;
         }
-        sp.setPositionAndUpdate(x + 0.5, pickY(), z + 0.5);
+        // Some attempts go to the SURFACE to photograph confusers (flowers,
+        // redstone fixtures) as hard negatives; the rest dig for ore.
+        huntingConfusers = session.hardNegativeRatio > 0 && rng.nextDouble() < session.hardNegativeRatio;
+        int y = huntingConfusers ? 160 : pickY();  // drop onto the surface from above
+        sp.setPositionAndUpdate(x + 0.5, y, z + 0.5);
         waitTicks = 0;
         state = State.DATA_WAIT;
+    }
+
+    /**
+     * For hard-negative attempts: drop from the spawn-in altitude down onto
+     * the surface so confuser blocks (flowers etc.) are within scan range.
+     */
+    private void findSurface() {
+        BlockPos pos = mc.thePlayer.getPosition();
+        int top = mc.theWorld.getHeight(pos).getY();  // first air above ground
+        if (top <= 1) {
+            markBarren();
+            state = State.NEXT_TARGET;
+            return;
+        }
+        EntityPlayerMP sp = serverPlayer();
+        if (sp == null) {
+            finish("error");
+            return;
+        }
+        // Float a few blocks above the surface for a clear downward view.
+        sp.setPositionAndUpdate(pos.getX() + 0.5, top + 3, pos.getZ() + 0.5);
+        waitTicks = 0;
+        state = State.RENDER_WAIT;
     }
 
     private static long regionKey(int x, int z) {
@@ -460,7 +492,13 @@ public class CollectorController {
 
     private void scan() {
         captureRetries = 0;
+        // Always scan ores so any real ore in frame still gets labeled, even
+        // on a hard-negative (confuser) shot.
         scanned = OreScanner.scan(mc.theWorld, mc.thePlayer.getPosition(), SCAN_RADIUS, session.classSet());
+        if (huntingConfusers) {
+            scanConfusers();
+            return;
+        }
         if (scanned.isEmpty()) {
             markBarren();
             // We're in cave air (findCave guarantees it), so a background shot
@@ -520,6 +558,43 @@ public class CollectorController {
                 jitterYaw = (rng.nextFloat() - 0.5f) * 16f;
                 jitterPitch = (rng.nextFloat() - 0.5f) * 12f;
                 negativeShot = false;
+                beginSettle(8);
+                return;
+            }
+        }
+        state = State.NEXT_TARGET;
+    }
+
+    /**
+     * Hard-negative shot: frame a confuser block (flower, redstone fixture...)
+     * and save it with no ore boxes - unless a real ore is genuinely in view,
+     * which the capture handler will still label correctly.
+     */
+    private void scanConfusers() {
+        List<BlockPos> confusers =
+                OreScanner.scanConfusers(mc.theWorld, mc.thePlayer.getPosition(), SCAN_RADIUS);
+        if (confusers.isEmpty()) {
+            state = State.NEXT_TARGET;  // bare biome (desert/ocean) - reroll
+            return;
+        }
+        Collections.shuffle(confusers, rng);
+        int tries = Math.min(8, confusers.size());
+        for (int i = 0; i < tries; i++) {
+            BlockPos target = confusers.get(i);
+            Vec3 eye = findViewpoint(target);
+            if (eye != null) {
+                EntityPlayerMP sp = serverPlayer();
+                if (sp == null) {
+                    finish("error");
+                    return;
+                }
+                sp.setPositionAndUpdate(eye.xCoord, eye.yCoord - mc.thePlayer.getEyeHeight(), eye.zCoord);
+                aimTarget = new Vec3(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5);
+                targetOre = null;
+                targetLabel = null;
+                jitterYaw = (rng.nextFloat() - 0.5f) * 16f;
+                jitterPitch = (rng.nextFloat() - 0.5f) * 12f;
+                negativeShot = true;  // empty label is the whole point
                 beginSettle(8);
                 return;
             }

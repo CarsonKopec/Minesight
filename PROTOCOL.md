@@ -98,6 +98,7 @@ GUI → mod:
   "gamma_min": 0.0, "gamma_max": 1.5,
   "fov_min": 70, "fov_max": 110,
   "negative_ratio": 0.0,
+  "hard_negative_ratio": 0.0,
   "settle_ticks": 40,
   "avoid_revisits": true,
   "class_targets": {"gold_ore": 200, "lapis_ore": 200},
@@ -112,6 +113,12 @@ GUI → mod:
 render wait, negatives, revisit-skipping, per-client target). `classes` and
 `output_dir` are fixed for the session: label indices and file destinations
 must not change mid-run.
+
+`hard_negative_ratio` is the fraction of attempts that surface and photograph
+confuser blocks (flowers, mushrooms, redstone torches/blocks/dust, pumpkins,
+cacti) as empty-label hard negatives — teaching the model not to fire on
+reddish/colorful non-ore clusters. Real ore that happens to be in frame is
+still labeled normally.
 
 With `avoid_revisits`, the mod keeps a per-world file
 (`minesight/visited_<world>.json` in the game directory) of every ore block

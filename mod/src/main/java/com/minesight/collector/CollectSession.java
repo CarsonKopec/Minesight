@@ -24,6 +24,12 @@ public class CollectSession {
     public int fovMin = 70;
     public int fovMax = 110;
     public double negativeRatio = 0.0;  // 0 = never save frames without boxes
+    /**
+     * Fraction of attempts that surface and photograph confuser blocks
+     * (flowers, redstone torches...) as empty-label HARD NEGATIVES, teaching
+     * the model not to fire on reddish/colorful non-ore clusters.
+     */
+    public double hardNegativeRatio = 0.0;
     /** Minimum ticks to wait after a teleport so the chunk renderer catches up. */
     public int settleTicks = 40;
     /** Skip ores already captured in this world (persistent history). */
@@ -73,6 +79,7 @@ public class CollectSession {
         if (o.has("fov_min")) fovMin = o.get("fov_min").getAsInt();
         if (o.has("fov_max")) fovMax = o.get("fov_max").getAsInt();
         if (o.has("negative_ratio")) negativeRatio = o.get("negative_ratio").getAsDouble();
+        if (o.has("hard_negative_ratio")) hardNegativeRatio = o.get("hard_negative_ratio").getAsDouble();
         if (o.has("settle_ticks")) settleTicks = o.get("settle_ticks").getAsInt();
         if (o.has("avoid_revisits")) avoidRevisits = o.get("avoid_revisits").getAsBoolean();
         if (o.has("class_targets")) {
