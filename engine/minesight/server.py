@@ -20,6 +20,11 @@ class DetectionServer:
         # The mod never subscribes, keeping images off its connection per spec.
         self.preview_clients: set = set()
         self.player_state: dict | None = None  # latest, consumed by later phases
+        # Active learning: latest frame + predictions, grabbed on demand when a
+        # tester flags a mistake. Set by the pipeline each iteration.
+        self.latest_frame = None
+        self.latest_objects: list = []
+        self.review_callback = None  # set by main: (frame, objects, reason) -> str|None
         self._server = None
 
     @property
@@ -58,6 +63,15 @@ class DetectionServer:
             self.preview_clients.add(ws)
         elif msg_type == "unsubscribe_preview":
             self.preview_clients.discard(ws)
+        elif msg_type == "review_capture":
+            # A tester flagged the current frame as a mistake (hotkey or GUI).
+            self.capture_review("manual")
+
+    def capture_review(self, reason: str) -> str | None:
+        """Snapshot the current frame + predictions for human correction."""
+        if self.review_callback is None or self.latest_frame is None:
+            return None
+        return self.review_callback(self.latest_frame, list(self.latest_objects), reason)
 
     async def broadcast(self, message: dict) -> None:
         if not self.clients:

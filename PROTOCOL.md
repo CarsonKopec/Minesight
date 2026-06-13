@@ -63,6 +63,23 @@ Sent every client tick (20 Hz) while in a world.
   matrices and raycasts it into the real world — far more accurate than the
   spec's engine-side depth estimation, and it doesn't need this message.
 
+## Mod/GUI → Engine: review capture (active learning)
+
+```json
+{"type": "review_capture"}
+```
+
+Sent by the mod (F9 keybind) or the GUI Engine tab. The engine writes the
+current frame + the model's predictions to `engine/review/<stem>.png` +
+`<stem>.json`; the GUI Review tab loads them for correction. The engine also
+auto-captures uncertain frames (confidence 0.30–0.55) when run with
+`--auto-review`. Review JSON shape:
+
+```json
+{"reason": "manual|auto", "frame_w": 1920, "frame_h": 1080, "ts": 0,
+ "predictions": [{"label": "redstone_ore", "x": 540, "y": 320, "w": 40, "h": 40, "confidence": 0.42, "id": 7}]}
+```
+
 ## GUI ↔ Engine: preview & stats (Control Panel only)
 
 A client that sends `{"type": "subscribe_preview"}` (the Control Panel GUI)

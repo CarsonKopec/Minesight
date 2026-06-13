@@ -29,6 +29,7 @@ class EngineTab(QWidget):
     """Start/stop the detection engine, watch its logs and live preview."""
 
     statsUpdated = Signal(dict)  # consumed by the main-window status bar
+    reviewCaptured = Signal()    # a frame was flagged for review
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,6 +102,20 @@ class EngineTab(QWidget):
         self.status = QLabel("Engine: stopped")
         row3.addWidget(self.status)
         row3.addStretch(1)
+        self.auto_review = QCheckBox("Auto-flag uncertain")
+        self.auto_review.setToolTip(
+            "Auto-save frames where the model is unsure (confidence 0.30-0.55)\n"
+            "to the Review tab - hands-off active learning."
+        )
+        row3.addWidget(self.auto_review)
+        self.review_btn = QPushButton("🚩 Capture for review")
+        self.review_btn.setToolTip(
+            "Snapshot the current frame + the model's boxes for correction in the\n"
+            "Review tab. Same as pressing F9 in-game. Use it when you spot a mistake."
+        )
+        self.review_btn.setEnabled(False)
+        self.review_btn.clicked.connect(self._capture_review)
+        row3.addWidget(self.review_btn)
         self.preview_check = QCheckBox("Live preview")
         self.preview_check.setChecked(True)
         row3.addWidget(self.preview_check)
@@ -129,6 +144,7 @@ class EngineTab(QWidget):
             self.device.setCurrentIndex(idx)
         self.tracking.setChecked(s.value("engine/track", True, type=bool))
         self.fp16.setChecked(s.value("engine/half", True, type=bool))
+        self.auto_review.setChecked(s.value("engine/autoReview", False, type=bool))
         saved_weights = s.value("engine/weights", "")
         if saved_weights and self.weights.findData(saved_weights) >= 0:
             self.set_weights(saved_weights)
@@ -141,6 +157,7 @@ class EngineTab(QWidget):
         s.setValue("engine/weights", self.weights.currentData() or "")
         s.setValue("engine/track", self.tracking.isChecked())
         s.setValue("engine/half", self.fp16.isChecked())
+        s.setValue("engine/autoReview", self.auto_review.isChecked())
 
     # --- weights selection -------------------------------------------------
 
@@ -187,6 +204,8 @@ class EngineTab(QWidget):
             args.append("--no-track")
         if self.fp16.isChecked() and self.device.currentData() != "cpu":
             args.append("--half")
+        if self.auto_review.isChecked():
+            args.append("--auto-review")
         self.log.append_line(f"$ python {' '.join(args[1:])}")
         self.proc.start(PYTHON, args, str(ENGINE_DIR))
         self._ws_retry.start()
@@ -215,6 +234,13 @@ class EngineTab(QWidget):
         self.ws.sendTextMessage(json.dumps({"type": "subscribe_preview"}))
         self._update_state()
 
+    def _capture_review(self) -> None:
+        if self.ws.isValid():
+            self.ws.sendTextMessage(json.dumps({"type": "review_capture"}))
+            self.log.append_line("[flagged current frame for review]")
+            # Give the engine a beat to write the files, then refresh the tab.
+            QTimer.singleShot(400, self.reviewCaptured.emit)
+
     def _ws_message(self, message: str) -> None:
         try:
             data = json.loads(message)
@@ -242,6 +268,7 @@ class EngineTab(QWidget):
         running = self.proc.running
         self.start_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
+        self.review_btn.setEnabled(running and self.ws.isValid())
         if not running:
             self.status.setText("Engine: stopped")
             self.preview.setPixmap(QPixmap())

@@ -63,12 +63,15 @@ public class MineSightMod {
     }
 
     private KeyBinding toggleOverlay;
+    private KeyBinding flagReview;
+    private WebSocketManager backendWs;
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
         DetectionStore store = new DetectionStore();
         WebSocketManager ws = new WebSocketManager(URI.create(BACKEND_URI), store);
         ws.start();
+        backendWs = ws;
 
         MinecraftForge.EVENT_BUS.register(new PlayerStateSender(ws));
         MinecraftForge.EVENT_BUS.register(new OverlayRenderer(store));
@@ -77,7 +80,9 @@ public class MineSightMod {
         MinecraftForge.EVENT_BUS.register(new WorldMarkers(store, new OreMemory()));
 
         toggleOverlay = new KeyBinding("Cycle MineSight overlay", Keyboard.KEY_F8, "MineSight");
+        flagReview = new KeyBinding("Flag detection for review", Keyboard.KEY_F9, "MineSight");
         ClientRegistry.registerKeyBinding(toggleOverlay);
+        ClientRegistry.registerKeyBinding(flagReview);
         MinecraftForge.EVENT_BUS.register(this);
 
         // Dataset collector: dormant until the Control Panel sends collect_start.
@@ -94,13 +99,25 @@ public class MineSightMod {
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END || toggleOverlay == null) return;
+        Minecraft mc = Minecraft.getMinecraft();
         while (toggleOverlay.isPressed()) {
             OverlayMode mode = OverlayMode.cycle();
-            Minecraft mc = Minecraft.getMinecraft();
             if (mc.thePlayer != null) {
                 mc.thePlayer.addChatMessage(new ChatComponentText(
                         EnumChatFormatting.AQUA + "[MineSight] " + EnumChatFormatting.RESET
                                 + "overlay: " + mode.label));
+            }
+        }
+        while (flagReview.isPressed()) {
+            // Ask the engine to snapshot the current frame + predictions so the
+            // Control Panel can correct them and feed them back into training.
+            if (backendWs != null) {
+                backendWs.send("{\"type\":\"review_capture\"}");
+            }
+            if (mc.thePlayer != null) {
+                mc.thePlayer.addChatMessage(new ChatComponentText(
+                        EnumChatFormatting.AQUA + "[MineSight] " + EnumChatFormatting.RESET
+                                + "flagged this frame for review"));
             }
         }
     }

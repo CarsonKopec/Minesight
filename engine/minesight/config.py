@@ -15,6 +15,7 @@ class Config:
     device: str | None = None  # None -> ultralytics auto-selects (CUDA if available)
     track: bool = True  # persistent object IDs via ByteTrack (Phase 2)
     half: bool = False  # FP16 inference - faster on RTX GPUs
+    auto_review: bool = False  # auto-capture low-confidence frames for correction
     debug_view: bool = False
     monitor: int = 1  # mss monitor index used when the window is not found
 
@@ -53,6 +54,11 @@ def parse_args(argv: list[str] | None = None) -> Config:
         help="FP16 inference - roughly 1.5-2x faster on RTX GPUs",
     )
     p.add_argument(
+        "--auto-review",
+        action="store_true",
+        help="Auto-save low-confidence frames to engine/review/ for correction",
+    )
+    p.add_argument(
         "--debug-view",
         action="store_true",
         help="Show an OpenCV window with drawn detections (validate without the mod; q to quit)",
@@ -74,6 +80,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         device=a.device,
         track=a.track,
         half=a.half,
+        auto_review=a.auto_review,
         debug_view=a.debug_view,
         monitor=a.monitor,
     )

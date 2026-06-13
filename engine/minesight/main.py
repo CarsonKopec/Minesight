@@ -20,6 +20,7 @@ import cv2
 from .capture import WindowCapture
 from .config import Config, parse_args
 from .detector import Detector
+from .review import save_review
 from .server import DetectionServer
 
 log = logging.getLogger("minesight")
@@ -27,6 +28,11 @@ log = logging.getLogger("minesight")
 _PREVIEW_INTERVAL_S = 1 / 12  # cap GUI preview at ~12 FPS
 _PREVIEW_MAX_W = 960
 _STATS_INTERVAL_S = 2.0
+# Auto-review: a detection whose confidence lands in this band is one the model
+# is unsure about - exactly the frames worth correcting.
+_UNCERTAIN_LO = 0.30
+_UNCERTAIN_HI = 0.55
+_AUTO_REVIEW_COOLDOWN_S = 8.0
 
 
 def _draw_boxes(frame, objects):
@@ -70,11 +76,15 @@ def _pipeline_loop(cfg: Config, server: DetectionServer, loop, stop: threading.E
     capture = WindowCapture(cfg.window_title, cfg.monitor)
     detector = Detector(cfg.weights, cfg.imgsz, cfg.conf, cfg.device, cfg.track, cfg.half)
 
+    # Active learning: the server saves the current frame on demand (hotkey/GUI).
+    server.review_callback = save_review
+
     frames = 0
     t0 = time.monotonic()
     fps = 0.0
     last_preview = 0.0
     last_stats = 0.0
+    last_auto_review = 0.0
     warned_fallback = False
 
     # No artificial FPS cap: the spec's 10-30 FPS limit is not needed on a 4060 Ti.
@@ -99,8 +109,18 @@ def _pipeline_loop(cfg: Config, server: DetectionServer, loop, stop: threading.E
         }
         asyncio.run_coroutine_threadsafe(server.broadcast(message), loop)
 
+        # Expose the live frame so a flagged-mistake hotkey can grab it.
+        server.latest_frame = frame
+        server.latest_objects = objects
+
         frames += 1
         now = time.monotonic()
+
+        # Auto-flag uncertain frames for review (rate-limited).
+        if cfg.auto_review and now - last_auto_review >= _AUTO_REVIEW_COOLDOWN_S:
+            if any(_UNCERTAIN_LO <= o["confidence"] <= _UNCERTAIN_HI for o in objects):
+                last_auto_review = now
+                save_review(frame, objects, "auto")
         if now - t0 >= 5.0:
             fps = frames / (now - t0)
             log.info(

@@ -12,6 +12,7 @@ from .datasets_tab import DatasetsTab
 from .engine_tab import EngineTab
 from .mod_tab import ModTab
 from .models_tab import ModelsTab
+from .review_tab import ReviewTab
 from .training_tab import TrainingTab
 
 
@@ -46,6 +47,7 @@ class MainWindow(QMainWindow):
         self.models_tab = ModelsTab()
         self.datasets_tab = DatasetsTab()
         self.collector_tab = CollectorTab()
+        self.review_tab = ReviewTab()
         self.clients_tab = ClientsTab()
         self.mod_tab = ModTab()
         tabs.addTab(self.engine_tab, "🔭 Engine")
@@ -53,6 +55,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.training_tab, "🏋 Training")
         tabs.addTab(self.datasets_tab, "🗂 Datasets")
         tabs.addTab(self.collector_tab, "📷 Collector")
+        tabs.addTab(self.review_tab, "🔍 Review")
         tabs.addTab(self.clients_tab, "🎮 Clients")
         tabs.addTab(self.mod_tab, "🧩 Mod")
         self.setCentralWidget(tabs)
@@ -64,6 +67,9 @@ class MainWindow(QMainWindow):
         self.training_tab.trainingFinished.connect(lambda _code: self.engine_tab.refresh_weights())
         self.collector_tab.datasetsChanged.connect(self.datasets_tab.refresh)
         self.collector_tab.datasetsChanged.connect(self.training_tab.refresh_datasets)
+        self.collector_tab.datasetsChanged.connect(self.review_tab.refresh_targets)
+        self.review_tab.datasetsChanged.connect(self.datasets_tab.refresh)
+        self.engine_tab.reviewCaptured.connect(self.review_tab.refresh)
 
         # Status bar: engine stats + GPU
         self.engine_status = QLabel("engine: stopped")
@@ -118,7 +124,8 @@ class MainWindow(QMainWindow):
 
     def shutdown_all(self) -> None:
         # Idempotent: runs on window close AND app quit (quit() skips closeEvent).
-        for tab in (self.engine_tab, self.training_tab, self.mod_tab, self.collector_tab, self.clients_tab):
+        for tab in (self.engine_tab, self.training_tab, self.mod_tab, self.collector_tab,
+                    self.clients_tab, self.review_tab):
             tab.shutdown()
 
     def closeEvent(self, event) -> None:

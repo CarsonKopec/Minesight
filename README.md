@@ -78,6 +78,17 @@ sandboxed game clients pointed at your host. Setup on the remote PC:
 The first launch downloads Minecraft/Forge/JDK 8 via Gradle (several minutes);
 afterwards it's instant. Clients appear in the host's Collector tab marked 🌐,
 and the session is controlled entirely from the host.
+- **Review tab — active learning (correct the model's mistakes)** — when the
+  model is wrong while you play, press **F9** in-game (or *Capture for review*
+  on the Engine tab) to snapshot that exact frame plus what it predicted. Or
+  tick *Auto-flag uncertain* to have the engine auto-capture borderline
+  (0.30–0.55 confidence) frames hands-free. In the Review tab you fix each one
+  in a built-in annotation editor — delete false-positive boxes, drag/draw the
+  correct ones, relabel via the class dropdown, or *All wrong → hard negative*
+  for things like flowers — then *Save correction → dataset* writes it straight
+  into the target dataset's train split. Mistake-corrections are the
+  highest-value training data there is. Retrain and the model stops repeating
+  that error.
 - **Clients tab** — embeds running game windows as tabs inside the Control Panel
   (no floating windows). Farm clients launched from the Mod tab auto-embed;
   manually launched games embed on request and can be released back to the
