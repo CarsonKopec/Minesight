@@ -13,6 +13,7 @@ from .clients_tab import ClientsTab
 from .collector_tab import CollectorTab
 from .datasets_tab import DatasetsTab
 from .engine_tab import EngineTab
+from .farm2_tab import Farm2Tab
 from .logs_tab import LogsTab, QtLogHandler
 from .mod_tab import ModTab
 from .models_tab import ModelsTab
@@ -57,6 +58,7 @@ class MainWindow(QMainWindow):
         self.review_tab = ReviewTab()
         self.clients_tab = ClientsTab()
         self.mod_tab = ModTab()
+        self.farm2_tab = Farm2Tab()
         self.version_tab = VersionTab()
         self.logs_tab = LogsTab(log_handler) if log_handler is not None else None
         tabs.addTab(self.engine_tab, "🔭 Engine")
@@ -67,6 +69,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.review_tab, "🔍 Review")
         tabs.addTab(self.clients_tab, "🎮 Clients")
         tabs.addTab(self.mod_tab, "🧩 Mod")
+        tabs.addTab(self.farm2_tab, "🌾 Farm 2.0")
         tabs.addTab(self.version_tab, "⚙ Version")
         if self.logs_tab is not None:
             tabs.addTab(self.logs_tab, "📜 Logs")
@@ -139,8 +142,8 @@ class MainWindow(QMainWindow):
     def shutdown_all(self) -> None:
         # Idempotent: runs on window close AND app quit (quit() skips closeEvent).
         log.info("Control Panel shutting down")
-        for tab in (self.engine_tab, self.training_tab, self.mod_tab, self.collector_tab,
-                    self.clients_tab, self.review_tab, self.datasets_tab):
+        for tab in (self.engine_tab, self.training_tab, self.mod_tab, self.farm2_tab,
+                    self.collector_tab, self.clients_tab, self.review_tab, self.datasets_tab):
             tab.shutdown()
 
     def closeEvent(self, event) -> None:

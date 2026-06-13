@@ -167,6 +167,11 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
     jar is only needed to exercise true regionized multithreading.
   - Needs Gradle 8.14.3 (run-paper 3.0.2 requirement; plugin wrapper is set to it).
 - Client: `cd client && ./gradlew build` → `client/build/libs/minesight-2.0.0.jar` into `.minecraft/mods/` (with Fabric Loader 0.19.3 + Fabric API). `./gradlew runClient` launches a dev client.
+  - Multi-client: `-Pminesight.runDir=run-clientN` gives each client its own run
+    dir; `-Pminesight.server=host[:port]` auto-joins on launch (quick play).
+- **Control Panel → 🌾 Farm 2.0 tab** drives all of the above: Build plugin +
+  client, Start/Stop the server (`runServer`), and Launch N Fabric clients
+  (`runClient`, staggered, each in its own `run-clientN`, optional auto-join).
 
 ## Phasing
 

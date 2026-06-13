@@ -24,6 +24,7 @@ engine/logs/
 client/build/
 client/.gradle/
 client/run/
+client/run-client*/
 plugin/build/
 plugin/.gradle/
 plugin/run/

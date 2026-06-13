@@ -31,6 +31,18 @@ loom {
             sourceSet(sourceSets["client"])
         }
     }
+    // Per-instance run dir so the Control Panel can launch several dev clients
+    // at once (-Pminesight.runDir=run-clientN); defaults to loom's "run".
+    // -Pminesight.server=host[:port] makes the client auto-join that server on
+    // launch (quick play) instead of dropping to the main menu.
+    runs {
+        named("client") {
+            (project.findProperty("minesight.runDir") as String?)?.let { runDir(it) }
+            (project.findProperty("minesight.server") as String?)?.let {
+                programArgs("--quickPlayMultiplayer", it)
+            }
+        }
+    }
 }
 
 tasks.processResources {
