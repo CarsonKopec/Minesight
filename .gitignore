@@ -23,6 +23,7 @@ engine/logs/
 # Mod build output (mod/.gitignore also covers these)
 mod/build/
 mod/*/build/
+mod/*/build-client*/
 mod/.gradle/
 mod/.gradle-client*/
 mod/*/.gradle/

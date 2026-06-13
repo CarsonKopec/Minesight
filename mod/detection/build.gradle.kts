@@ -12,6 +12,12 @@ val baseGroup: String by project
 val mcVersion: String by project
 val modid = "minesightdetection"
 
+// Parallel farm clients pass a unique suffix so each builds into its own dir
+// (build-clientN), so their long-lived game JVMs never lock the same jars.
+(project.findProperty("minesight.buildSuffix") as String?)?.let {
+    layout.buildDirectory.set(layout.projectDirectory.dir("build-$it"))
+}
+
 java {
     toolchain.languageVersion.set(JavaLanguageVersion.of(8))
 }

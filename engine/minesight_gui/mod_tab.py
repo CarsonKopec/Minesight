@@ -190,7 +190,7 @@ class ModTab(QWidget):
         self._launch_queue = list(range(1, count + 1))
         self.log.append_line(
             f"[launching {count} client(s), {LAUNCH_STAGGER_MS // 1000}s apart - "
-            "the first launch may need to compile first]"
+            "each builds into its own build-clientN dir; first build compiles]"
         )
         self._launch_next()
         if self._launch_queue:
@@ -202,14 +202,15 @@ class ModTab(QWidget):
             return
         idx = self._launch_queue.pop(0)
         base = self.world_base.text().strip()
-        # Farm clients run the collector mod (core shaded in). loom resolves
-        # runDir relative to mod/, so run-clientN lands at mod/run-clientN where
-        # the marker/options files live.
+        # Farm clients run the collector mod (core shaded in). Each client gets
+        # its own project cache AND its own build dir (build-clientN) so the
+        # long-lived game JVMs never lock/clobber each other's shared jars.
+        # runDir resolves relative to mod/, so run-clientN -> mod/run-clientN.
         args = [
             "/c", "gradlew.bat", ":collector:runClient", "--console=plain",
-            # Separate project caches let gradle builds run in parallel.
             "--project-cache-dir", f".gradle-client{idx}",
             f"-Pminesight.runDir=run-client{idx}",
+            f"-Pminesight.buildSuffix=client{idx}",
         ]
         # The mod reads this file from its run dir and auto-opens the world;
         # a file is reliable where gradle property forwarding is not.

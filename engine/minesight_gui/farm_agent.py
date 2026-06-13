@@ -121,7 +121,7 @@ class FarmAgentWindow(QMainWindow):
     # --- launching (mirrors the Mod tab launcher, plus the host marker) -------
 
     def launch_clients(self) -> None:
-        if self._launch_queue:
+        if self._launch_queue or (self._prebuild and self._prebuild.running):
             return
         self.settings.setValue("host", self.host.text().strip())
         self.settings.setValue("clients", self.client_count.value())
@@ -157,12 +157,13 @@ class FarmAgentWindow(QMainWindow):
             marker.unlink()
         self._patch_options(run_dir, self.mute.isChecked())
 
-        # Farm clients run the collector mod (core shaded in). loom resolves
-        # runDir relative to mod/, so run-clientN -> mod/run-clientN.
+        # Each client gets its own project cache + build dir (build-clientN) so
+        # the long-lived game JVMs never lock/clobber each other's jars.
         args = [
             "/c", "gradlew.bat", ":collector:runClient", "--console=plain",
             "--project-cache-dir", f".gradle-client{idx}",
             f"-Pminesight.runDir=run-client{idx}",
+            f"-Pminesight.buildSuffix=client{idx}",
         ]
         java_home = self.java_home.text().strip()
         if java_home:

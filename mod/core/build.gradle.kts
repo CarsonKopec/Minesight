@@ -14,6 +14,12 @@ plugins {
 val baseGroup: String by project
 val mcVersion: String by project
 
+// A parallel farm client builds the whole graph (incl. core) under its own
+// suffix so concurrent game JVMs never lock the same core jar.
+(project.findProperty("minesight.buildSuffix") as String?)?.let {
+    layout.buildDirectory.set(layout.projectDirectory.dir("build-$it"))
+}
+
 java {
     toolchain.languageVersion.set(JavaLanguageVersion.of(8))
 }
