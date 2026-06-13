@@ -95,9 +95,11 @@ def switch(ref: str) -> Path:
     """
     path = worktree_for(ref)
     cwd = path / "engine"
+    # {str(cwd)!r} emits a proper Python string literal (backslashes escaped);
+    # no r-prefix, or the backslashes would double.
     helper = (
         "import time, subprocess, sys; time.sleep(2); "
-        f"subprocess.Popen([sys.executable, '-m', 'minesight_gui'], cwd=r{str(cwd)!r})"
+        f"subprocess.Popen([sys.executable, '-m', 'minesight_gui'], cwd={str(cwd)!r})"
     )
     kwargs: dict = {}
     if os.name == "nt":
