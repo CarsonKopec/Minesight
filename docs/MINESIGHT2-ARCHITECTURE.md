@@ -99,7 +99,7 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
 | Fabric API | 0.141.4+1.21.11 |
 | Yarn mappings | 1.21.11+build.6 |
 | Fabric Loom | 1.17.11 (needs **Gradle 9.5.1** — client wrapper is set to it) |
-| Paper plugin build | Gradle 8.10.2, Java 21 |
+| Paper plugin build | Gradle 8.14.3 (run-paper 3.0.2), Java 21 |
 | Java | 21 |
 
 ## PoC status (branch `minesight-2.0`)
@@ -146,6 +146,14 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
 
 ### Build / run
 - Plugin: `cd plugin && ./gradlew build` → `plugin/build/libs/minesightfarm-2.0.0.jar` into the Folia `plugins/` folder.
+  - `./gradlew runServer` (run-paper plugin) downloads the server, stages the
+    built plugin into `plugins/`, and launches it under `plugin/run/`. First
+    launch writes `run/eula.txt` — set `eula=true` (and `online-mode=false` in
+    `run/server.properties` for a no-account dev server), then run again. Paper
+    is used for the dev loop; the Folia scheduler APIs the plugin uses also run
+    on Paper (single-threaded), so it's a faithful functional test. A real Folia
+    jar is only needed to exercise true regionized multithreading.
+  - Needs Gradle 8.14.3 (run-paper 3.0.2 requirement; plugin wrapper is set to it).
 - Client: `cd client && ./gradlew build` → `client/build/libs/minesight-2.0.0.jar` into `.minecraft/mods/` (with Fabric Loader 0.19.3 + Fabric API). `./gradlew runClient` launches a dev client.
 
 ## Phasing
