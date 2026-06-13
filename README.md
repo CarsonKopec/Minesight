@@ -183,6 +183,15 @@ iron tan, coal gray, copper orange (matched by substring of the class label).
 - [x] **Phase 2 — Stability**: persistent object IDs via ByteTrack (the modern
   SORT successor, ultralytics-native; `--no-track` to disable), FP16 inference
   (`--half`, ~1.5–2× faster on RTX), overlay holds last state between updates
+- [x] **Phase 3 — Memory & clustering**: per-world ore memory persisted to
+  `minesight/memory_<world>.json`, survives looking away and restarts, forgets
+  mined blocks; same-label nodes flood-filled into veins with one label each
+- [x] **Phase 4 — 3D awareness**: detections are unprojected through the live
+  GL matrices and raycast into the world, so markers anchor to the *exact*
+  block the model saw (no noisy depth estimation — the mod has the real world).
+  Through-wall world-space boxes + floating per-vein distance labels. **F8**
+  cycles overlay modes (2D+3D / 3D / 2D / off); rare ores (diamond/emerald)
+  ping when first discovered
 - [ ] **Phase 3 — Intelligence**: memory system, vein clustering, prioritization
 - [ ] **Phase 4 — 3D awareness**: screen-to-world mapping, world-space markers
 - [ ] **Phase 5 — Advanced**: radar/minimap, prediction, action suggestions

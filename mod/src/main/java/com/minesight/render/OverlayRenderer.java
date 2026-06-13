@@ -21,20 +21,6 @@ import java.util.Map;
  * window); they are rescaled into GUI coordinates via ScaledResolution.
  */
 public class OverlayRenderer {
-    private static final Map<String, Integer> LABEL_COLORS = new LinkedHashMap<String, Integer>();
-    private static final int DEFAULT_COLOR = 0xFFFFFFFF;
-
-    static {
-        LABEL_COLORS.put("diamond", 0xFF4AEDD9);
-        LABEL_COLORS.put("emerald", 0xFF2ECC40);
-        LABEL_COLORS.put("gold", 0xFFFFD700);
-        LABEL_COLORS.put("iron", 0xFFD8C8B8);
-        LABEL_COLORS.put("coal", 0xFF666666);
-        LABEL_COLORS.put("redstone", 0xFFFF4136);
-        LABEL_COLORS.put("lapis", 0xFF3D5AFE);
-        LABEL_COLORS.put("copper", 0xFFE07B4F);
-    }
-
     private final DetectionStore store;
 
     public OverlayRenderer(DetectionStore store) {
@@ -46,6 +32,7 @@ public class OverlayRenderer {
         // Post(ALL) fires once at the end of HUD rendering in 1.8.9. If boxes
         // ever fail to appear, ElementType.TEXT is a safe alternative hook.
         if (event.type != RenderGameOverlayEvent.ElementType.ALL) return;
+        if (!com.minesight.OverlayMode.get().hud()) return;
 
         DetectionFrame frame = store.getFresh();
         if (frame == null || frame.objects.isEmpty()) return;
@@ -64,7 +51,7 @@ public class OverlayRenderer {
             int top = Math.round((d.y - d.h / 2f) * sy);
             int right = Math.round((d.x + d.w / 2f) * sx);
             int bottom = Math.round((d.y + d.h / 2f) * sy);
-            int color = colorFor(d.label);
+            int color = OreColors.colorFor(d.label);
 
             drawBoxOutline(left, top, right, bottom, color);
 
@@ -74,15 +61,6 @@ public class OverlayRenderer {
         }
 
         GlStateManager.color(1f, 1f, 1f, 1f);
-    }
-
-    private static int colorFor(String label) {
-        if (label == null) return DEFAULT_COLOR;
-        String lower = label.toLowerCase();
-        for (Map.Entry<String, Integer> e : LABEL_COLORS.entrySet()) {
-            if (lower.contains(e.getKey())) return e.getValue();
-        }
-        return DEFAULT_COLOR;
     }
 
     private static void drawBoxOutline(int left, int top, int right, int bottom, int color) {

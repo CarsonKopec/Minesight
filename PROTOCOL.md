@@ -58,8 +58,10 @@ Sent every client tick (20 Hz) while in a world.
 
 - Position is the player entity position (doubles); `yaw`/`pitch` in degrees,
   `fov` is the FOV slider value.
-- Phase 1 stores the latest state on the engine side; Phase 4
-  (screen-to-world mapping) consumes it.
+- The engine stores the latest state. Note: screen-to-world mapping (Phase 4)
+  is done **in the mod**, which unprojects each detection through the live GL
+  matrices and raycasts it into the real world — far more accurate than the
+  spec's engine-side depth estimation, and it doesn't need this message.
 
 ## GUI ↔ Engine: preview & stats (Control Panel only)
 
