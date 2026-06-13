@@ -137,7 +137,7 @@ class MainWindow(QMainWindow):
         # Idempotent: runs on window close AND app quit (quit() skips closeEvent).
         log.info("Control Panel shutting down")
         for tab in (self.engine_tab, self.training_tab, self.mod_tab, self.collector_tab,
-                    self.clients_tab, self.review_tab):
+                    self.clients_tab, self.review_tab, self.datasets_tab):
             tab.shutdown()
 
     def closeEvent(self, event) -> None:

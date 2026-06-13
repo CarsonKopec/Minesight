@@ -91,6 +91,7 @@ class DatasetsTab(QWidget):
         split.setSizes([220, 760])
 
         self._task: Task | None = None
+        self._analyze_tasks: list[Task] = []
         self.refresh()
 
     def _busy(self, on: bool, msg: str = "") -> None:
@@ -113,13 +114,35 @@ class DatasetsTab(QWidget):
         if self.listw.count():
             self.listw.setCurrentRow(self.listw.count() - 1)
 
+    def _selected_name(self) -> str | None:
+        item = self.listw.currentItem()
+        return item.text() if item else None
+
     def _show_dataset(self, name: str) -> None:
         if not name:
             return
-        for ds in list_datasets():
-            if ds.name == name:
-                self._render(analyze(ds))
-                return
+        # Analysis reads every label file - run it off the UI thread so big
+        # datasets don't freeze the window. Stale results (user moved on) are
+        # discarded by the name check in _analyze_done.
+        self.warnings.setStyleSheet("color:#4aedd9;")
+        self.warnings.setText(f"⏳ analyzing {name}…")
+        task = Task(analyze, DATASETS_DIR / name, parent=self)
+        self._analyze_tasks.append(task)
+        task.done.connect(lambda health, n=name, t=task: self._analyze_done(n, health, t))
+        task.failed.connect(lambda msg, t=task: self._analyze_failed(msg, t))
+        task.start()
+
+    def _analyze_done(self, name: str, health: DatasetHealth, task: Task) -> None:
+        if task in self._analyze_tasks:
+            self._analyze_tasks.remove(task)
+        if name != self._selected_name():
+            return  # selection changed while analyzing - drop stale result
+        self._render(health)
+
+    def _analyze_failed(self, msg: str, task: Task) -> None:
+        if task in self._analyze_tasks:
+            self._analyze_tasks.remove(task)
+        log.warning("Dataset analysis failed: %s", msg)
 
     def _rebalance(self) -> None:
         item = self.listw.currentItem()
@@ -159,6 +182,14 @@ class DatasetsTab(QWidget):
         if item:
             self._show_dataset(item.text())
         QMessageBox.warning(self, "MineSight", msg)
+
+    def shutdown(self) -> None:
+        # Let any in-flight background tasks finish so Qt doesn't warn about
+        # threads destroyed while running.
+        for task in list(self._analyze_tasks):
+            task.wait(2000)
+        if self._task is not None:
+            self._task.wait(5000)
 
     def _merge(self) -> None:
         item = self.listw.currentItem()
