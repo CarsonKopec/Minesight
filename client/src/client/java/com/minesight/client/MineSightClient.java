@@ -1,10 +1,14 @@
 package com.minesight.client;
 
 import com.minesight.client.capture.CaptureManager;
+import com.minesight.client.detect.DetectionAnchor;
 import com.minesight.client.detect.DetectionStore;
 import com.minesight.client.detect.EngineClient;
+import com.minesight.client.detect.OreMemory;
 import com.minesight.client.detect.OverlayMode;
 import com.minesight.client.detect.OverlayRenderer;
+import com.minesight.client.detect.RadarRenderer;
+import com.minesight.client.detect.WorldMarkerRenderer;
 import com.minesight.client.net.FarmPayload;
 import com.minesight.client.net.FarmProtocol;
 import net.fabricmc.api.ClientModInitializer;
@@ -44,8 +48,10 @@ public class MineSightClient implements ClientModInitializer {
 
     private CaptureManager capture;
     private EngineClient engine;
+    private DetectionAnchor anchor;
     private KeyBinding overlayKey;
     private KeyBinding reviewKey;
+    private KeyBinding radarKey;
 
     @Override
     public void onInitializeClient() {
@@ -55,11 +61,20 @@ public class MineSightClient implements ClientModInitializer {
         MinecraftClient mc = MinecraftClient.getInstance();
         capture = new CaptureManager(mc);
 
-        // Detection overlay: engine connection + HUD renderer.
+        // Detection overlay + world memory: engine connection, anchoring, and
+        // the HUD layers (2D detection boxes, through-wall markers, radar).
         DetectionStore store = new DetectionStore();
+        OreMemory memory = new OreMemory();
         engine = new EngineClient(store);
+        anchor = new DetectionAnchor(mc, store, memory);
         OverlayRenderer overlay = new OverlayRenderer(store);
-        HudRenderCallback.EVENT.register((ctx, tick) -> overlay.render(ctx));
+        WorldMarkerRenderer markers = new WorldMarkerRenderer(mc, memory);
+        RadarRenderer radar = new RadarRenderer(mc, memory);
+        HudRenderCallback.EVENT.register((ctx, tick) -> {
+            overlay.render(ctx);
+            markers.render(ctx);
+            radar.render(ctx);
+        });
 
         overlayKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.minesight.overlay", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F8,
@@ -67,11 +82,16 @@ public class MineSightClient implements ClientModInitializer {
         reviewKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.minesight.review", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F9,
                 KeyBinding.Category.MISC));
+        radarKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.minesight.radar", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F7,
+                KeyBinding.Category.MISC));
 
-        // One client-tick handler: capture state machine, engine I/O, keybinds.
+        // One client-tick handler: capture state machine, engine I/O, anchoring,
+        // keybinds.
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             capture.tick();
             engine.tick(client);
+            anchor.tick();
             while (overlayKey.wasPressed()) {
                 OverlayMode mode = OverlayMode.cycle();
                 if (client.player != null) {
@@ -82,6 +102,12 @@ public class MineSightClient implements ClientModInitializer {
                 engine.reviewCapture();
                 if (client.player != null) {
                     client.player.sendMessage(Text.literal("[MineSight] frame flagged for review"), true);
+                }
+            }
+            while (radarKey.wasPressed()) {
+                boolean on = RadarRenderer.toggle();
+                if (client.player != null) {
+                    client.player.sendMessage(Text.literal("[MineSight] radar: " + (on ? "on" : "off")), true);
                 }
             }
         });

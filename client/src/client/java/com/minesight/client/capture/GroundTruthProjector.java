@@ -35,6 +35,26 @@ public final class GroundTruthProjector {
     }
 
     /**
+     * Project a single world point to screen pixels, or {@code null} if it is
+     * behind the camera. Used for placing world-marker labels.
+     */
+    public static double[] projectPoint(Matrix4f projection, Vec3d camPos, float yaw, float pitch,
+                                        int width, int height, double x, double y, double z) {
+        Matrix4f vp = new Matrix4f(projection)
+                .rotateX((float) Math.toRadians(pitch))
+                .rotateY((float) Math.toRadians(yaw + 180.0));
+        Vector4f v = new Vector4f((float) (x - camPos.x), (float) (y - camPos.y),
+                (float) (z - camPos.z), 1.0f);
+        vp.transform(v);
+        if (v.w <= 1.0e-4f) {
+            return null;
+        }
+        double px = (v.x / v.w * 0.5 + 0.5) * width;
+        double py = (0.5 - v.y / v.w * 0.5) * height;
+        return new double[]{px, py};
+    }
+
+    /**
      * Project a world AABB to a clipped screen rect, or {@code null} if it is not
      * fully in front of the camera or falls off / collapses on screen.
      */

@@ -158,10 +158,16 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
   (gamma/fov/settle, varied per shot) in `CaptureManager`. The collector tab
   routes each `collect_start`/`collect_update` field to the right role, so
   **Apply live** retunes scan-on-plugin and render-on-client independently.
-- ⏳ **Phase 3 remainder**: world markers + radar (the 3D/minimap parts) — they
-  need screen↔world unprojection and are the next slice.
-- ⏳ **Overlay still to verify in-game** (needs the engine running + a window
-  the engine captures).
+- ✅ **Phase 3 world module** ported (compiles): `OreMemory` (persistent
+  per-world ore memory), `DetectionAnchor` (unproject each detection + raycast →
+  record into memory, screen→world via the inverted camera matrix),
+  `WorldMarkerRenderer` (through-wall markers + per-vein labels, drawn on the
+  HUD by projecting memory rather than using the reworked world-render pipeline),
+  `RadarRenderer` (top-down minimap + suggestion + depth advisor, F7). Phase 3
+  feature-complete.
+- ⏳ **Overlay/markers/radar still to verify in-game** (needs the engine running
+  + a window it captures); markers/anchoring share the capture FOV/near
+  calibration.
 
 ### Build / run
 - Plugin: `cd plugin && ./gradlew build` → `plugin/build/libs/minesightfarm-2.0.0.jar` into the Folia `plugins/` folder.
@@ -187,8 +193,8 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
 2. **Collection MVP (in progress):** plugin scan + teleport + capture-trigger ✅;
    client capture + ground-truth projection + local dataset write ✅ (both
    compile); ⏳ verify/calibrate captures in-game; ⏳ image upload to the GUI.
-3. **Overlay/world port:** detection overlay ✅ (engine WS + HUD boxes + F8/F9);
-   ⏳ world markers + radar (screen↔world) remain.
+3. **Overlay/world port:** ✅ detection overlay (engine WS + HUD boxes + F8/F9),
+   world memory + anchoring, through-wall markers, radar (F7). Done.
 4. **Polish:** parity with 1.8.9 features (visited history, hard negatives,
    smart targeting, multi-client) on the new architecture.
 
