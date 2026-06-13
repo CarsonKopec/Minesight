@@ -124,16 +124,19 @@ def finalize(session_name: str, classes: list[str], seed: int = 42,
 def merge_into(src_ds: Path, dst_ds: Path) -> int:
     """Copy src images+labels into dst, remapping class indices by name.
 
-    Every src class must exist in dst's names. Returns images copied.
+    Classes the destination doesn't know yet are appended to its data.yaml
+    (existing indices never shift). Returns images copied.
     """
     src_cfg = yaml.safe_load((src_ds / "data.yaml").read_text(encoding="utf-8"))
     dst_cfg = yaml.safe_load((dst_ds / "data.yaml").read_text(encoding="utf-8"))
     src_names = [str(n) for n in src_cfg["names"]]
     dst_names = [str(n) for n in dst_cfg["names"]]
-    missing = [n for n in src_names if n not in dst_names]
-    if missing:
-        raise ValueError(
-            f"Classes {missing} don't exist in {dst_ds.name} - can't merge without them."
+    new_classes = [n for n in src_names if n not in dst_names]
+    if new_classes:
+        dst_names = dst_names + new_classes
+        (dst_ds / "data.yaml").write_text(
+            "train: ../train/images\nval: ../valid/images\ntest: ../test/images\n\n"
+            f"nc: {len(dst_names)}\nnames: {dst_names}\n"
         )
     remap = {i: dst_names.index(n) for i, n in enumerate(src_names)}
 
