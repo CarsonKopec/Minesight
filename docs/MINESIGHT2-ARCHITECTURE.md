@@ -111,6 +111,17 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
   `minesightfarm-2.0.0.jar`, join with a Fabric 1.21.11 client carrying
   `minesight-2.0.0.jar` + Fabric API; the client chats "[MineSight] linked to
   MineSightFarm vX" if the packet path works. That confirms risk #1.
+- ✅ **Regionized ore scanner** (`FoliaOreLocator` + `OreCatalog`) compiles
+  against the real Folia API. Async chunk gen (`getChunkAtAsync(...,true)`),
+  region-thread `ChunkSnapshot`, off-thread snapshot scan, nearest-first chunk
+  order, bounded in-flight concurrency, thread-safe result queue. `OreCatalog`
+  covers 1.21 ores incl. deepslate variants (→ same base label) and the new
+  `copper_ore`, plus modern confuser categories (amethyst/sculk added).
+- ✅ **In-game test command** `/minesightfarm scan <ore> [radius] | status | tp |
+  stop` (alias `/msf`): drives the scanner off a global-region heartbeat and
+  teleports the player (spectator, `teleportAsync`) to located ore — exercises
+  risks #3/#4 without the Python GUI.
+- ⏳ **Live scan/teleport** still to verify in-game (needs a running Folia world).
 
 ### Build / run
 - Plugin: `cd plugin && ./gradlew build` → `plugin/build/libs/minesightfarm-2.0.0.jar` into the Folia `plugins/` folder.

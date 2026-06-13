@@ -5,3 +5,8 @@ api-version: '1.21'
 folia-supported: true
 description: Server-side ore scanning, spectator teleporting, and capture orchestration for the MineSight dataset farm.
 authors: [kopec]
+commands:
+  minesightfarm:
+    description: Control the MineSight dataset farm (regionized ore scan + teleport).
+    usage: /minesightfarm <scan <ore> [radius] | status | tp | stop>
+    aliases: [msf]
