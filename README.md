@@ -213,4 +213,9 @@ iron tan, coal gray, copper orange (matched by substring of the class label).
   ping when first discovered
 - [ ] **Phase 3 — Intelligence**: memory system, vein clustering, prioritization
 - [ ] **Phase 4 — 3D awareness**: screen-to-world mapping, world-space markers
-- [ ] **Phase 5 — Advanced**: radar/minimap, prediction, action suggestions
+- [x] **Phase 5 — Advanced**: HUD **radar/minimap** of the ore memory
+  (player-up, color-coded dots, rare ores beyond range clamp to the rim as
+  directional indicators; **F7** toggles it); **action suggestions** — a
+  direction arrow + distance to the nearest valuable ore (▲ ahead / ▼ behind /
+  ◀ left / ▶ right); **depth advisor** showing what vanilla spawns at your
+  current Y (grounded "prediction"); rare-ore discovery ping (from Phase 4)

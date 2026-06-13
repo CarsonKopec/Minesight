@@ -6,6 +6,7 @@ import com.minesight.collector.CollectorController;
 import com.minesight.collector.CollectorSocket;
 import com.minesight.render.OverlayRenderer;
 import com.minesight.world.OreMemory;
+import com.minesight.world.RadarRenderer;
 import com.minesight.world.WorldMarkers;
 import com.minesight.ws.WebSocketManager;
 import net.minecraft.client.Minecraft;
@@ -64,6 +65,7 @@ public class MineSightMod {
 
     private KeyBinding toggleOverlay;
     private KeyBinding flagReview;
+    private KeyBinding toggleRadar;
     private WebSocketManager backendWs;
 
     @Mod.EventHandler
@@ -76,13 +78,18 @@ public class MineSightMod {
         MinecraftForge.EVENT_BUS.register(new PlayerStateSender(ws));
         MinecraftForge.EVENT_BUS.register(new OverlayRenderer(store));
 
-        // Phases 3+4: world-anchored markers with persistent ore memory.
-        MinecraftForge.EVENT_BUS.register(new WorldMarkers(store, new OreMemory()));
+        // Phases 3+4: world-anchored markers + persistent ore memory (shared
+        // with the Phase 5 radar so both read the same nodes).
+        OreMemory memory = new OreMemory();
+        MinecraftForge.EVENT_BUS.register(new WorldMarkers(store, memory));
+        MinecraftForge.EVENT_BUS.register(new RadarRenderer(memory));
 
         toggleOverlay = new KeyBinding("Cycle MineSight overlay", Keyboard.KEY_F8, "MineSight");
         flagReview = new KeyBinding("Flag detection for review", Keyboard.KEY_F9, "MineSight");
+        toggleRadar = new KeyBinding("Toggle MineSight radar", Keyboard.KEY_F7, "MineSight");
         ClientRegistry.registerKeyBinding(toggleOverlay);
         ClientRegistry.registerKeyBinding(flagReview);
+        ClientRegistry.registerKeyBinding(toggleRadar);
         MinecraftForge.EVENT_BUS.register(this);
 
         // Dataset collector: dormant until the Control Panel sends collect_start.
@@ -118,6 +125,14 @@ public class MineSightMod {
                 mc.thePlayer.addChatMessage(new ChatComponentText(
                         EnumChatFormatting.AQUA + "[MineSight] " + EnumChatFormatting.RESET
                                 + "flagged this frame for review"));
+            }
+        }
+        while (toggleRadar.isPressed()) {
+            boolean on = RadarRenderer.toggle();
+            if (mc.thePlayer != null) {
+                mc.thePlayer.addChatMessage(new ChatComponentText(
+                        EnumChatFormatting.AQUA + "[MineSight] " + EnumChatFormatting.RESET
+                                + "radar: " + (on ? "on" : "off")));
             }
         }
     }

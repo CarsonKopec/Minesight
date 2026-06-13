@@ -91,6 +91,22 @@ public final class OreScanner {
         return Y_BANDS.get(label);
     }
 
+    /**
+     * Ores whose vanilla spawn band includes this Y - a grounded "what am I
+     * likely to find here" hint for the radar (Phase 5 prediction).
+     */
+    public static String depthHint(int y) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, int[]> e : Y_BANDS.entrySet()) {
+            int[] band = e.getValue();
+            if (y >= band[0] && y <= band[1]) {
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(e.getKey().replace("_ore", ""));
+            }
+        }
+        return sb.toString();
+    }
+
     /** Positions of wanted ore blocks within a cubic radius of center. */
     public static List<BlockPos> scan(World world, BlockPos center, int radius, Set<String> wanted) {
         List<BlockPos> out = new ArrayList<BlockPos>();

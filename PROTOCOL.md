@@ -159,7 +159,12 @@ Mod → GUI:
 {"type": "collect_done", "saved": 300, "reason": "target|stopped|error", "message": "...", "class_counts": {"iron_ore": 120, "gold_ore": 35}}
 ```
 
-## Planned message types (later phases)
+## Notes
 
-- `suggestion` — engine → mod action hints (`{"type": "suggestion", "action": "turn_left", "reason": "diamond detected"}`).
+- The spec floated a `suggestion` message (engine → mod, e.g.
+  `{"type": "suggestion", "action": "turn_left", "reason": "diamond detected"}`).
+  MineSight instead generates action suggestions **in the mod** (Phase 5 radar):
+  it has the ore memory's world positions and the player's facing, so it can
+  point an arrow at the nearest valuable ore directly — no engine round-trip
+  needed. No new wire message required.
 - Unknown `type` values must be ignored by both sides (both implementations do).
