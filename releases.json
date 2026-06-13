@@ -1,0 +1,19 @@
+{
+  "releases": [
+    {
+      "name": "MineSight 2.0 (Fabric + Folia)",
+      "ref": "minesight-2.0",
+      "description": "Modern Minecraft 1.21.11: Fabric client + Folia server plugin. In active development."
+    },
+    {
+      "name": "MineSight 1.8.9 (Forge)",
+      "ref": "mc1.8.9",
+      "description": "Stable Forge 1.8.9 build with the full data flywheel (collect, hard-negatives, review, train)."
+    },
+    {
+      "name": "MineSight (main)",
+      "ref": "main",
+      "description": "The mainline branch (currently the working 1.8.9 build)."
+    }
+  ]
+}

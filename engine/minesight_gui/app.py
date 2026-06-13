@@ -18,6 +18,7 @@ from .mod_tab import ModTab
 from .models_tab import ModelsTab
 from .review_tab import ReviewTab
 from .training_tab import TrainingTab
+from .version_tab import VersionTab
 
 log = logging.getLogger("minesight.gui")
 
@@ -56,6 +57,7 @@ class MainWindow(QMainWindow):
         self.review_tab = ReviewTab()
         self.clients_tab = ClientsTab()
         self.mod_tab = ModTab()
+        self.version_tab = VersionTab()
         self.logs_tab = LogsTab(log_handler) if log_handler is not None else None
         tabs.addTab(self.engine_tab, "🔭 Engine")
         tabs.addTab(self.models_tab, "🧠 Models")
@@ -65,6 +67,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.review_tab, "🔍 Review")
         tabs.addTab(self.clients_tab, "🎮 Clients")
         tabs.addTab(self.mod_tab, "🧩 Mod")
+        tabs.addTab(self.version_tab, "⚙ Version")
         if self.logs_tab is not None:
             tabs.addTab(self.logs_tab, "📜 Logs")
         self.setCentralWidget(tabs)
