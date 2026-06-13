@@ -28,9 +28,9 @@ import java.util.List;
  */
 public class CaptureHandler {
     private static final int MIN_BOX_PX = 6;
-    private static final int MIN_VISIBLE_SAMPLES = 2;
-    /** The aimed ore must project inside this central fraction of the screen. */
-    private static final float AIM_MARGIN = 0.08f;
+    /** The aimed ore's center must be on-screen, but may sit near the edges -
+     *  off-center framing is deliberate (real ore isn't always centered). */
+    private static final float AIM_MARGIN = 0.04f;
 
     private final CollectorController controller;
     private final FloatBuffer modelview = BufferUtils.createFloatBuffer(16);
@@ -105,12 +105,12 @@ public class CaptureHandler {
         List<BlockPos> boxedOres = new ArrayList<BlockPos>();
         List<String> boxedLabels = new ArrayList<String>();
         for (BlockPos ore : controller.scannedOres()) {
-            if (ore.distanceSq(mc.thePlayer.getPosition()) > 16 * 16) continue;
+            if (ore.distanceSq(mc.thePlayer.getPosition()) > 22 * 22) continue;
             String label = OreScanner.labelFor(mc.theWorld.getBlockState(ore).getBlock());
             if (label == null) continue;
             int cls = session.classIndex(label);
             if (cls < 0) continue;
-            if (RaycastUtil.visibleSamples(mc.theWorld, eye, ore) < MIN_VISIBLE_SAMPLES) continue;
+            if (RaycastUtil.visibleSamples(mc.theWorld, eye, ore) < controller.minVisibleSamples()) continue;
 
             float[] box = projectBlock(ore, camX, camY, camZ, width, height);
             if (box == null) continue;

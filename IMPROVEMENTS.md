@@ -9,22 +9,22 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## High impact
 
-### [ ] 1. Diversify collected data (fix the "too clean" distribution)
-**Problem:** the collector aims dead-center at every ore and only saves frames
-that pass the aim gate, so the model learns "ore = a centered, well-framed,
-fully-visible block." Real gameplay has ores off-center, partially occluded,
-at varied distances, while moving. Train/play distribution mismatch silently
-caps real-world accuracy — more *clean* data won't fix it.
+### [x] 1. Diversify collected data (fix the "too clean" distribution)  — done 2026-06-13 (mod 0.10.1)
+**Problem:** the collector aimed dead-center at every ore behind a narrow
+central aim gate, so the model learned "ore = a centered, well-framed,
+fully-visible block" — a train/play mismatch that silently capped accuracy.
 
-**Fix sketch:**
-- Randomize framing: offset the aim point so the ore lands off-center (not just
-  small jitter — sometimes near a screen edge).
-- Keep/encourage partial occlusion (loosen the visible-samples gate sometimes).
-- Vary camera distance more widely.
-- Vary graphics settings per session/shot: render distance, Fast/Fancy,
-  (gamma already varied).
-- Maybe a small "handheld" yaw/pitch drift to mimic looking around.
-**Why first:** highest leverage on model quality, the project's weakest link.
+**What shipped:**
+- Off-center framing: aim jitter widened to ±18° yaw / ±14° pitch, and the
+  capture aim gate opened from central 84% to the full frame minus a 4% edge,
+  so ores are deliberately framed off-center (decays toward center only on
+  retry, for recovery).
+- Partial occlusion: 30% of shots accept a single visible face (per-shot
+  `minVisibleSamples`), so the model sees half-hidden ores.
+- Wider distance: viewpoints now 2–18 blocks out (was 2.5–13) for varied
+  on-screen sizes incl. small/distant ores; capture box range bumped to 22.
+- Graphics variety: Fast/Fancy + ambient-occlusion randomized per teleport
+  spot; render distance randomized per session. All saved/restored.
 
 ### [ ] 2. Parallelize the inference pipeline
 **Problem:** `grab → infer → broadcast` is serial in one thread, so

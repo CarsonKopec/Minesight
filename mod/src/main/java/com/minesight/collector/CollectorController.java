@@ -67,6 +67,14 @@ public class CollectorController {
     private int dryAttempts;     // targets since the last successful save
     private String targetLabel;  // class of the aimed ore
     private boolean huntingConfusers;  // this attempt seeks surface hard negatives
+    private int minVisibleSamples = 2; // lowered per-shot to allow partial occlusion
+
+    // Off-center framing: real ore isn't always centered, so vary how far the
+    // target sits from screen center (degrees). Decayed on retry for recovery.
+    private static final float MAX_FRAME_YAW = 18f;
+    private static final float MAX_FRAME_PITCH = 14f;
+    /** Fraction of ore shots that deliberately allow heavier occlusion. */
+    private static final float OCCLUSION_SHOT_CHANCE = 0.3f;
     /** Saved BOXES per class this session - drives balance and class targets. */
     private final java.util.Map<String, Integer> sessionClassCounts =
             new java.util.HashMap<String, Integer>();
@@ -86,7 +94,15 @@ public class CollectorController {
     private boolean prevHideGui;
     private boolean prevPause;
     private boolean prevBobbing;
+    private boolean prevFancyGraphics;
+    private int prevAmbientOcclusion;
+    private int prevRenderDistance;
     private double startX, startY, startZ;
+
+    /** Public so CaptureHandler can honor the per-shot occlusion allowance. */
+    public int minVisibleSamples() {
+        return minVisibleSamples;
+    }
 
     public void setSocket(CollectorSocket socket) {
         this.socket = socket;
@@ -167,6 +183,9 @@ public class CollectorController {
         prevHideGui = mc.gameSettings.hideGUI;
         prevPause = mc.gameSettings.pauseOnLostFocus;
         prevBobbing = mc.gameSettings.viewBobbing;
+        prevFancyGraphics = mc.gameSettings.fancyGraphics;
+        prevAmbientOcclusion = mc.gameSettings.ambientOcclusion;
+        prevRenderDistance = mc.gameSettings.renderDistanceChunks;
         startX = mc.thePlayer.posX;
         startY = mc.thePlayer.posY;
         startZ = mc.thePlayer.posZ;
@@ -175,6 +194,9 @@ public class CollectorController {
         mc.gameSettings.hideGUI = true;
         mc.gameSettings.pauseOnLostFocus = false;  // keep rendering while the GUI has focus
         mc.gameSettings.viewBobbing = false;
+        // A random render distance per session adds fog/draw-distance variety
+        // across runs (set once - changing it mid-run reloads all chunks).
+        mc.gameSettings.renderDistanceChunks = 6 + rng.nextInt(7);  // 6..12
 
         wanderCenter = mc.thePlayer.getPosition();
         attempts = 0;
@@ -205,6 +227,9 @@ public class CollectorController {
         mc.gameSettings.hideGUI = prevHideGui;
         mc.gameSettings.pauseOnLostFocus = prevPause;
         mc.gameSettings.viewBobbing = prevBobbing;
+        mc.gameSettings.fancyGraphics = prevFancyGraphics;
+        mc.gameSettings.ambientOcclusion = prevAmbientOcclusion;
+        mc.gameSettings.renderDistanceChunks = prevRenderDistance;
         session = null;
         captureRequested = false;
         visited.saveIfDirty();
@@ -317,6 +342,10 @@ public class CollectorController {
         shotsAtSpot = 0;
         dryAttempts++;
         controlEnvironment();
+        // Vary fancy/fast graphics + smooth lighting per spot for texture
+        // diversity; the render-wait after teleport absorbs the chunk rebuild.
+        mc.gameSettings.fancyGraphics = rng.nextBoolean();
+        mc.gameSettings.ambientOcclusion = rng.nextInt(3);  // 0=off,1,2
         // With visited-ore skipping, an area eventually taps out; migrate the
         // search center to fresh terrain instead of grinding it forever.
         if (dryAttempts > 0 && dryAttempts % RELOCATE_AFTER_DRY_ATTEMPTS == 0) {
@@ -592,8 +621,12 @@ public class CollectorController {
                 aimTarget = new Vec3(ore.getX() + 0.5, ore.getY() + 0.5, ore.getZ() + 0.5);
                 targetOre = ore;
                 targetLabel = OreScanner.labelFor(mc.theWorld.getBlockState(ore).getBlock());
-                jitterYaw = (rng.nextFloat() - 0.5f) * 16f;
-                jitterPitch = (rng.nextFloat() - 0.5f) * 12f;
+                // Push the ore well off-center so the model sees it framed the
+                // way it appears in real play, not always dead-center.
+                jitterYaw = (rng.nextFloat() - 0.5f) * 2f * MAX_FRAME_YAW;
+                jitterPitch = (rng.nextFloat() - 0.5f) * 2f * MAX_FRAME_PITCH;
+                // Some shots accept heavier occlusion (a single visible face).
+                minVisibleSamples = rng.nextFloat() < OCCLUSION_SHOT_CHANCE ? 1 : 2;
                 negativeShot = false;
                 beginSettle(8);
                 return;
@@ -658,7 +691,9 @@ public class CollectorController {
             double dz = rng.nextGaussian();
             double len = Math.sqrt(dx * dx + dy * dy + dz * dz);
             if (len < 0.01) continue;
-            double dist = 2.5 + rng.nextDouble() * 10.5;
+            // Wide distance range -> varied on-screen ore sizes, incl. the
+            // small/distant cases the spec calls out for small-object detection.
+            double dist = 2.0 + rng.nextDouble() * 16.0;  // 2..18 blocks
             Vec3 eye = oreCenter.addVector(dx / len * dist, dy / len * dist, dz / len * dist);
             BlockPos feet = new BlockPos(eye.xCoord, eye.yCoord - mc.thePlayer.getEyeHeight(), eye.zCoord);
             if (!hasChunkData(feet)) continue;
