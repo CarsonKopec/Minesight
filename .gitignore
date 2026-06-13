@@ -16,6 +16,9 @@ engine/*.err
 # Active-learning review queue (transient, machine-local)
 engine/review/
 
+# Rotating debug logs
+engine/logs/
+
 # Mod build output (mod/.gitignore also covers these)
 mod/build/
 mod/.gradle/
