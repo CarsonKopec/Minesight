@@ -1,6 +1,8 @@
 package com.minesight.collector;
 
 import com.google.gson.JsonObject;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.util.BlockPos;
@@ -28,6 +30,8 @@ public class CollectorController {
     private static final int CAPTURE_RADIUS = 16;
     /** Never teleport into the bedrock layer (y0-4) - you'd be encased. */
     private static final int MIN_SAFE_Y = 5;
+
+    private static final Logger LOGGER = LogManager.getLogger("MineSight-Collector");
 
     private final Minecraft mc = Minecraft.getMinecraft();
     private final Random rng = new Random();
@@ -182,6 +186,8 @@ public class CollectorController {
         sendLog("Weather cleared and daytime enforced for clean captures.");
         visited.load(mc.getIntegratedServer().getFolderName());
         state = State.NEXT_TARGET;
+        LOGGER.info("Collection started: target={} classes={} upload={} hardNeg={} visited={}",
+                s.target, s.classes, s.upload, s.hardNegativeRatio, visited.size());
         sendLog("Collection started: target " + s.target + " images, classes " + s.classes
                 + (s.avoidRevisits ? " (skipping " + visited.size() + " previously captured ores)" : ""));
     }
@@ -202,6 +208,8 @@ public class CollectorController {
         session = null;
         captureRequested = false;
         visited.saveIfDirty();
+        LOGGER.info("Collection finished: reason={} saved={} classBalance={}",
+                reason, saved, sessionClassCounts);
         sendDone(saved, reason, null);
     }
 

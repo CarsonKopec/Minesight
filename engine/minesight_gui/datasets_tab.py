@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -24,6 +25,9 @@ from matplotlib.figure import Figure
 from . import collect_io
 from .constants import DATASETS_DIR
 from .health import DatasetHealth, SPLITS, analyze, list_datasets
+from .workers import Task
+
+log = logging.getLogger("minesight.gui.datasets")
 
 
 class DatasetsTab(QWidget):
@@ -86,7 +90,15 @@ class DatasetsTab(QWidget):
         split.addWidget(right)
         split.setSizes([220, 760])
 
+        self._task: Task | None = None
         self.refresh()
+
+    def _busy(self, on: bool, msg: str = "") -> None:
+        self.rebalance_btn.setEnabled(not on)
+        self.merge_btn.setEnabled(not on)
+        if on:
+            self.warnings.setStyleSheet("color:#4aedd9;")
+            self.warnings.setText(f"⏳ {msg}")
 
     def refresh(self) -> None:
         current = self.listw.currentItem().text() if self.listw.currentItem() else None
@@ -124,17 +136,29 @@ class DatasetsTab(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        try:
-            counts = collect_io.rebalance_splits(ds_dir)
-        except Exception as e:
-            QMessageBox.warning(self, "MineSight", str(e))
-            return
+        log.info("Rebalancing splits for '%s'", name)
+        self._busy(True, f"rebalancing {name}…")
+        self._task = Task(collect_io.rebalance_splits, ds_dir, parent=self)
+        self._task.done.connect(lambda counts: self._rebalance_done(name, counts))
+        self._task.failed.connect(self._op_failed)
+        self._task.start()
+
+    def _rebalance_done(self, name: str, counts: dict) -> None:
+        self._busy(False)
+        log.info("Rebalanced '%s': %s", name, counts)
         QMessageBox.information(
             self, "Rebalance splits",
             f"Done: train {counts['train']}, valid {counts['valid']}, test {counts['test']}.",
         )
         self._show_dataset(name)
         self.datasetsChanged.emit()
+
+    def _op_failed(self, msg: str) -> None:
+        self._busy(False)
+        item = self.listw.currentItem()
+        if item:
+            self._show_dataset(item.text())
+        QMessageBox.warning(self, "MineSight", msg)
 
     def _merge(self) -> None:
         item = self.listw.currentItem()
@@ -150,12 +174,17 @@ class DatasetsTab(QWidget):
         )
         if not ok:
             return
-        try:
-            copied = collect_io.merge_into(DATASETS_DIR / src_name, DATASETS_DIR / target)
-        except Exception as e:
-            QMessageBox.warning(self, "MineSight", str(e))
-            return
-        # Offer to clear out the now-merged source to keep the list tidy.
+        log.info("Merging '%s' into '%s'", src_name, target)
+        self._busy(True, f"merging {src_name} → {target}…")
+        self._task = Task(collect_io.merge_into, DATASETS_DIR / src_name, DATASETS_DIR / target,
+                          parent=self)
+        self._task.done.connect(lambda copied: self._merge_done(src_name, target, copied))
+        self._task.failed.connect(self._op_failed)
+        self._task.start()
+
+    def _merge_done(self, src_name: str, target: str, copied: int) -> None:
+        self._busy(False)
+        log.info("Merged %d image(s) from '%s' into '%s'", copied, src_name, target)
         remove = QMessageBox.question(
             self, "Merge dataset",
             f"Merged {copied} image(s) into '{target}'.\n\nDelete the source '{src_name}' now?",
@@ -165,6 +194,7 @@ class DatasetsTab(QWidget):
         if remove == QMessageBox.StandardButton.Yes:
             import shutil
             shutil.rmtree(DATASETS_DIR / src_name, ignore_errors=True)
+            log.info("Deleted merged source '%s'", src_name)
         self.refresh()
         self.datasetsChanged.emit()
 

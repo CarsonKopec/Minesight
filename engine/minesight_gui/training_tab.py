@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Signal
@@ -19,6 +20,8 @@ from .constants import ENGINE_DIR, PYTHON, STOCK_MODELS
 from .health import list_datasets
 from .procs import ManagedProcess
 from .widgets import LogView
+
+log = logging.getLogger("minesight.gui.training")
 
 
 class TrainingTab(QWidget):
@@ -153,6 +156,8 @@ class TrainingTab(QWidget):
             "--name", name,
         ]
         self.log.append_line(f"$ python {' '.join(args[1:])}")
+        log.info("Training started: name=%s data=%s model=%s epochs=%d",
+                 name, data, model, self.epochs.value())
         self.proc.start(PYTHON, args, str(ENGINE_DIR))
         self.status.setText(f"Training '{name}'…")
 

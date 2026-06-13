@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import math
 import socket as _socket
 import time
@@ -35,6 +36,8 @@ from .constants import DATASETS_DIR
 from .gallery import ImageInspector
 from .health import analyze, list_datasets
 from .widgets import LogView
+
+log = logging.getLogger("minesight.gui.collector")
 
 COLLECTOR_PORT = 8766
 
@@ -513,6 +516,8 @@ class CollectorTab(QWidget):
             total += per_client
         self._collecting = True
         self._session_started = time.monotonic()
+        log.info("Collection started: dataset=%s target=%d clients=%d classes=%s",
+                 name, total, len(clients), classes)
         self.progress.setMaximum(total)
         self.progress.setValue(0)
         self._update_buttons()

@@ -20,6 +20,7 @@ import cv2
 from .capture import WindowCapture
 from .config import Config, parse_args
 from .detector import Detector
+from .logconf import setup_logging
 from .review import save_review
 from .server import DetectionServer
 
@@ -98,7 +99,12 @@ def _pipeline_loop(cfg: Config, server: DetectionServer, loop, stop: threading.E
             )
             warned_fallback = True
 
+        t_grab = time.monotonic()
         objects = detector.infer(frame)
+        if log.isEnabledFor(logging.DEBUG):
+            infer_ms = (time.monotonic() - t_grab) * 1000
+            log.debug("frame %dx%d | infer %.1f ms | %d det", frame.shape[1],
+                      frame.shape[0], infer_ms, len(objects))
         h, w = frame.shape[:2]
         message = {
             "type": "detections",
@@ -193,12 +199,10 @@ async def _run(cfg: Config) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
     cfg = parse_args(argv)
+    setup_logging("engine", debug=cfg.debug)
+    log.info("MineSight engine starting (weights=%s, imgsz=%d, track=%s, half=%s)",
+             cfg.weights, cfg.imgsz, cfg.track, cfg.half)
 
     # A bare model name (yolo26s.pt) is auto-downloaded by ultralytics, but an
     # explicit path that doesn't exist deserves a clear error, not a traceback.

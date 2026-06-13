@@ -97,7 +97,15 @@ and the session is controlled entirely from the host.
 - **Mod tab** — build/install the jar, plus a **multi-client launcher**: pick a
   client count and world base name, and it spins up N sandboxed dev clients
   (`run-clientN/`), each auto-opening its own world (created on first launch).
+- **Logs tab** — the Control Panel's own application log, live, with a Debug
+  toggle. Full DEBUG detail is always written to `engine/logs/` (rotating
+  files: `control-panel.log`, `engine.log`); the engine also logs there and
+  takes `--debug` for per-frame capture/inference timings. The mod logs
+  collector events through Forge's log4j.
 - Status bar shows GPU utilization / VRAM / temperature.
+
+Heavy dataset operations (rebalance, merge) run on a background thread so the
+window never freezes, with a busy indicator while they work.
 
 The preview/stats feed uses the same WebSocket as the mod (`subscribe_preview`
 message); the mod never receives image data, per the spec's network guidance.

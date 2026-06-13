@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 
 from PySide6.QtCore import QSettings, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
@@ -20,6 +21,8 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import ENGINE_DIR, PYTHON, STOCK_MODELS, WS_URL
+
+log = logging.getLogger("minesight.gui.engine")
 from .procs import ManagedProcess
 from .runs import scan_runs
 from .widgets import LogView
@@ -207,10 +210,12 @@ class EngineTab(QWidget):
         if self.auto_review.isChecked():
             args.append("--auto-review")
         self.log.append_line(f"$ python {' '.join(args[1:])}")
+        log.info("Starting engine: %s", " ".join(args[1:]))
         self.proc.start(PYTHON, args, str(ENGINE_DIR))
         self._ws_retry.start()
 
     def stop_engine(self) -> None:
+        log.info("Stopping engine")
         self._ws_retry.stop()
         self.ws.close()
         self.proc.stop()

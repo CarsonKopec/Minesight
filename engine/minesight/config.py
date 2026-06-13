@@ -16,6 +16,7 @@ class Config:
     track: bool = True  # persistent object IDs via ByteTrack (Phase 2)
     half: bool = False  # FP16 inference - faster on RTX GPUs
     auto_review: bool = False  # auto-capture low-confidence frames for correction
+    debug: bool = False  # DEBUG-level logging (per-frame timings, etc.)
     debug_view: bool = False
     monitor: int = 1  # mss monitor index used when the window is not found
 
@@ -59,6 +60,11 @@ def parse_args(argv: list[str] | None = None) -> Config:
         help="Auto-save low-confidence frames to engine/review/ for correction",
     )
     p.add_argument(
+        "--debug",
+        action="store_true",
+        help="DEBUG-level logging incl. per-frame capture/inference timings",
+    )
+    p.add_argument(
         "--debug-view",
         action="store_true",
         help="Show an OpenCV window with drawn detections (validate without the mod; q to quit)",
@@ -81,6 +87,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         track=a.track,
         half=a.half,
         auto_review=a.auto_review,
+        debug=a.debug,
         debug_view=a.debug_view,
         monitor=a.monitor,
     )
