@@ -26,16 +26,14 @@ def pool_count(session_name: str) -> int:
 
 def _dhash(img_path: Path, hash_size: int = 8) -> int:
     """Difference hash: nearly identical frames get nearly identical bits."""
+    import numpy as np
     from PIL import Image
 
     with Image.open(img_path) as im:
-        im = im.convert("L").resize((hash_size + 1, hash_size))
-        px = list(im.getdata())
+        arr = np.asarray(im.convert("L").resize((hash_size + 1, hash_size)), dtype=np.int16)
     bits = 0
-    for row in range(hash_size):
-        for col in range(hash_size):
-            i = row * (hash_size + 1) + col
-            bits = (bits << 1) | (px[i] > px[i + 1])
+    for v in (arr[:, :-1] > arr[:, 1:]).flatten():
+        bits = (bits << 1) | int(v)
     return bits
 
 

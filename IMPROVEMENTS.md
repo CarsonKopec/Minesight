@@ -36,12 +36,18 @@ max(capture, inference). Verified: continuous stream, clean shutdown, 37.8 FPS
 at full 1920×1080 with ~14 ms inference. The overlap pays off most when
 inference dominates (bigger model / 1280px / FP16).
 
-### [ ] 3. Commit a real test suite
-**Problem:** all verification tests live in `%TEMP%` and vanish; zero committed
-coverage over the data pipeline where a bug silently corrupts training data.
-**Fix sketch:** `engine/tests/` with pytest covering `collect_io`
-(finalize/merge/rebalance/dedup), `health.analyze`, `review` save, detector
-tracking smoke. Wire a `pytest` run; optionally GitHub Actions.
+### [x] 3. Commit a real test suite  — done 2026-06-13
+**What shipped:** `engine/tests/` (pytest, run `python -m pytest` from
+`engine/`). 10 tests, ~1s, all temp-dir isolated — never touch real data:
+- `test_collect_io.py`: finalize (split + yaml + pool consumed), empty-pool
+  error, dedup keeps richest copy, merge appends+remaps classes, rebalance
+  spreads rare classes into valid/test.
+- `test_health.py`: box/empty counts, junk-class + too-few-boxes warnings,
+  clean dataset → no warnings.
+- `test_review.py`: engine review capture writes PNG + predictions, server
+  uses latest frame, no-frame returns None.
+- `conftest.py` fixtures build synthetic datasets/pools; `pytest.ini` config.
+(GitHub Actions CI could come later; this protects the data pipeline now.)
 
 ---
 

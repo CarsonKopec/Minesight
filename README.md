@@ -23,6 +23,7 @@ Later phases (tracking, memory, 3D mapping, radar) are scoped in the spec.
 | `engine/` | Python ML engine (`minesight` package) + `train.py` |
 | `engine/minesight_gui/` | PySide6 Control Panel (models, datasets, training, engine, mod) |
 | `engine/tools/` | One-off dataset tooling (e.g. the v3 rebuild script) |
+| `engine/tests/` | pytest suite for the data pipeline — `cd engine && python -m pytest` |
 | `mod/` | Forge 1.8.9 client mod (modern Gradle via Essential's architectury-loom) |
 | `MineSight-GUI.bat` | Double-click launcher for the Control Panel |
 | `PROTOCOL.md` | WebSocket JSON protocol reference |
