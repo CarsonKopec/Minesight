@@ -137,7 +137,10 @@ public class ServerOreLocator {
                 for (int y = yLo; y <= yHi; y++) {
                     pos.set(x, y, z);
                     String label = OreScanner.labelFor(chunk.getBlockState(pos).getBlock());
-                    if (label != null && wanted.contains(label) && hasAirNeighbor(world, x, y, z)) {
+                    if (label != null && wanted.contains(label)) {
+                        // Queue all wanted ore; the capture pipeline (findCave,
+                        // viewpoint raycast, pixel checks) verifies real
+                        // visibility, so no fragile server-side air test here.
                         results.add(new BlockPos(x, y, z));
                         oresFound++;
                         if (results.size() >= RESULT_CAP) return;
@@ -145,14 +148,5 @@ public class ServerOreLocator {
                 }
             }
         }
-    }
-
-    private static boolean hasAirNeighbor(WorldServer world, int x, int y, int z) {
-        return world.isAirBlock(new BlockPos(x + 1, y, z))
-                || world.isAirBlock(new BlockPos(x - 1, y, z))
-                || world.isAirBlock(new BlockPos(x, y + 1, z))
-                || world.isAirBlock(new BlockPos(x, y - 1, z))
-                || world.isAirBlock(new BlockPos(x, y, z + 1))
-                || world.isAirBlock(new BlockPos(x, y, z - 1));
     }
 }
