@@ -13,6 +13,9 @@ engine/datasets/
 engine/*.log
 engine/*.err
 
+# Active-learning review queue (transient, machine-local)
+engine/review/
+
 # Mod build output (mod/.gitignore also covers these)
 mod/build/
 mod/.gradle/
