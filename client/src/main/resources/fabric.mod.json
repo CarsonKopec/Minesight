@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "minesight",
+  "version": "${version}",
+  "name": "MineSight",
+  "description": "Vision-augmented Minecraft client: detection overlay + dataset collection, talking to the MineSightFarm server plugin.",
+  "authors": ["kopec"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.minesight.client.MineSightClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.16",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

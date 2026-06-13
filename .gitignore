@@ -20,6 +20,14 @@ engine/review/
 # Rotating debug logs
 engine/logs/
 
+# MineSight 2.0 (Fabric client + Folia plugin) build output
+client/build/
+client/.gradle/
+client/run/
+plugin/build/
+plugin/.gradle/
+plugin/run/
+
 # Mod build output (mod/.gitignore also covers these)
 mod/build/
 mod/*/build/
