@@ -240,6 +240,14 @@ class CollectorTab(QWidget):
             "photograph the same vein twice - avoids near-duplicate images."
         )
         controls.addWidget(self.skip_visited)
+        self.smart_targeting = QCheckBox("Smart targeting")
+        self.smart_targeting.setChecked(True)
+        self.smart_targeting.setToolTip(
+            "Scan the world on the (integrated) server to teleport straight to\n"
+            "confirmed, cave-exposed ore instead of guessing - far fewer wasted\n"
+            "hops, especially for rare deep ores. Singleplayer/farm worlds only."
+        )
+        controls.addWidget(self.smart_targeting)
         clear_hist = QPushButton("Clear world history")
         clear_hist.setToolTip("Forget which ores were captured (sent to every connected client)")
         clear_hist.clicked.connect(self._clear_history)
@@ -308,6 +316,7 @@ class CollectorTab(QWidget):
             ",".join(f"{label}:{spin.value()}" for label, spin in self.class_goals.items()),
         )
         s.setValue("collector/confusers", ",".join(self._confuser_categories()))
+        s.setValue("collector/smartTargeting", self.smart_targeting.isChecked())
         self.log.append_line("[settings saved]")
 
     def _load_settings(self) -> None:
@@ -320,6 +329,7 @@ class CollectorTab(QWidget):
         skip = s.value("collector/skipVisited")
         if skip is not None:
             self.skip_visited.setChecked(s.value("collector/skipVisited", True, type=bool))
+        self.smart_targeting.setChecked(s.value("collector/smartTargeting", True, type=bool))
         saved_classes = s.value("collector/classes")
         if saved_classes is not None:
             chosen = set(str(saved_classes).split(","))
@@ -362,6 +372,7 @@ class CollectorTab(QWidget):
             "confuser_categories": self._confuser_categories(),
             "settle_ticks": self.settle.value(),
             "avoid_revisits": self.skip_visited.isChecked(),
+            "smart_targeting": self.smart_targeting.isChecked(),
             "class_targets": self._class_targets(len(in_session)),
         }
         for sock, _info in in_session:
@@ -543,6 +554,7 @@ class CollectorTab(QWidget):
                 "confuser_categories": self._confuser_categories(),
                 "settle_ticks": self.settle.value(),
                 "avoid_revisits": self.skip_visited.isChecked(),
+                "smart_targeting": self.smart_targeting.isChecked(),
                 "class_targets": self._class_targets(len(clients)),
                 "classes": classes,
                 # Clients on other machines can't write to our disk; they

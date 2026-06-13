@@ -38,6 +38,8 @@ public class CollectSession {
     public int settleTicks = 40;
     /** Skip ores already captured in this world (persistent history). */
     public boolean avoidRevisits = true;
+    /** Use the server-side scanner to teleport straight to confirmed ore. */
+    public boolean smartTargeting = true;
     public List<String> classes = new ArrayList<String>();
     /**
      * Optional per-class minimum BOX counts ("collect until gold >= 200").
@@ -93,6 +95,7 @@ public class CollectSession {
         }
         if (o.has("settle_ticks")) settleTicks = o.get("settle_ticks").getAsInt();
         if (o.has("avoid_revisits")) avoidRevisits = o.get("avoid_revisits").getAsBoolean();
+        if (o.has("smart_targeting")) smartTargeting = o.get("smart_targeting").getAsBoolean();
         if (o.has("class_targets")) {
             classTargets.clear();
             for (Map.Entry<String, JsonElement> e : o.getAsJsonObject("class_targets").entrySet()) {

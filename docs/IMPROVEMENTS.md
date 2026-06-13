@@ -97,3 +97,13 @@ probably safe, but verify, or have the engine capture before HUD if feasible).
 - Active-learning review loop, hard-negative collection, dedup, stratified
   rebalance, dataset merge, multi-PC farms, app-wide logging, background
   threading for heavy GUI ops.
+- **Server-side ore pre-scan / smart targeting** (mod 0.11.0, 2026-06-13):
+  `ServerOreLocator` force-generates + scans chunks on the integrated-server
+  thread for cave-exposed wanted ore, and the collector teleports straight to
+  confirmed positions instead of guessing (random fallback while the queue
+  fills). GUI "Smart targeting" toggle. Massively cuts wasted teleports,
+  especially for rare deep ores. (Note: a shared dedicated server — Paper etc.
+  — was considered and rejected: no real Paper for 1.8.9, a client mod can't
+  teleport/scan server-side on a remote server without a separate plugin +
+  anti-cheat issues, and 1.8.x chunk gen is single-threaded so it wouldn't
+  scale. The integrated-server-per-client farm is the better fit.)

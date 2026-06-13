@@ -119,6 +119,7 @@ GUI → mod:
   "confuser_categories": ["flowers", "foliage", "mushrooms", "redstone"],
   "settle_ticks": 40,
   "avoid_revisits": true,
+  "smart_targeting": true,
   "class_targets": {"gold_ore": 200, "lapis_ore": 200},
   "classes": ["diamond_ore", "gold_ore", "iron_ore", "lapis_ore", "redstone_ore"]
 }
@@ -143,6 +144,12 @@ With `avoid_revisits`, the mod keeps a per-world file
 (`minesight/visited_<world>.json` in the game directory) of every ore block
 that appears in a saved capture and never aims at those again — across
 sessions. `collect_clear_history` wipes it for the open world.
+
+With `smart_targeting` (singleplayer/integrated-server worlds only), the mod
+force-generates and scans chunks **on the server thread** to find cave-exposed
+ore of the wanted classes, then teleports the camera straight to confirmed
+positions instead of guessing — far fewer wasted hops. It falls back to random
+teleporting while the scan queue is filling, so collection never stalls.
 
 `classes` order defines the label indices the mod writes.
 

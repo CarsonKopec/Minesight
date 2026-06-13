@@ -33,10 +33,14 @@ public class CollectorController {
 
     private static final Logger LOGGER = LogManager.getLogger("MineSight-Collector");
 
+    private static final int PRESCAN_BATCH_CHUNKS = 3;   // chunks generated per server tick
+    private static final int PRESCAN_REFILL_AT = 16;     // refill queue when it drops below this
+
     private final Minecraft mc = Minecraft.getMinecraft();
     private final Random rng = new Random();
     private final DatasetWriter writer = new DatasetWriter();
     private final VisitedStore visited = new VisitedStore();
+    private final ServerOreLocator locator = new ServerOreLocator();
 
     private CollectorSocket socket;
     private CollectSession session;
@@ -207,6 +211,11 @@ public class CollectorController {
         controlEnvironment();
         sendLog("Weather cleared and daytime enforced for clean captures.");
         visited.load(mc.getIntegratedServer().getFolderName());
+        if (s.smartTargeting) {
+            reconfigureLocator();
+            requestRefill();
+            sendLog("Smart targeting on: server is scanning for exposed ore to aim at.");
+        }
         state = State.NEXT_TARGET;
         LOGGER.info("Collection started: target={} classes={} upload={} hardNeg={} visited={}",
                 s.target, s.classes, s.upload, s.hardNegativeRatio, visited.size());
@@ -346,15 +355,31 @@ public class CollectorController {
         // diversity; the render-wait after teleport absorbs the chunk rebuild.
         mc.gameSettings.fancyGraphics = rng.nextBoolean();
         mc.gameSettings.ambientOcclusion = rng.nextInt(3);  // 0=off,1,2
+
+        // Surface confuser (hard-negative) attempts are random by nature.
+        huntingConfusers = session.hardNegativeRatio > 0 && rng.nextDouble() < session.hardNegativeRatio;
+
+        // Smart targeting: teleport straight to a server-confirmed, cave-exposed
+        // ore instead of guessing. Falls through to random when the queue is
+        // empty (startup / refilling) so the collector is never idle.
+        if (!huntingConfusers && session.smartTargeting && mc.getIntegratedServer() != null) {
+            requestRefill();
+            BlockPos ore = pollUnvisitedOre();
+            if (ore != null) {
+                sp.setPositionAndUpdate(ore.getX() + 0.5, ore.getY(), ore.getZ() + 0.5);
+                waitTicks = 0;
+                state = State.DATA_WAIT;
+                return;
+            }
+            if (locator.exhausted()) {
+                relocateSearch();  // whole area scanned - jump to fresh terrain
+            }
+        }
+
         // With visited-ore skipping, an area eventually taps out; migrate the
         // search center to fresh terrain instead of grinding it forever.
         if (dryAttempts > 0 && dryAttempts % RELOCATE_AFTER_DRY_ATTEMPTS == 0) {
-            double angle = rng.nextDouble() * Math.PI * 2;
-            int jump = session.radius + rng.nextInt(session.radius + 1);
-            wanderCenter = wanderCenter.add(
-                    (int) (Math.cos(angle) * jump), 0, (int) (Math.sin(angle) * jump));
-            sendLog("Area looks tapped out - moving search center to "
-                    + wanderCenter.getX() + ", " + wanderCenter.getZ());
+            relocateSearch();
         }
         // Avoid regions that already proved barren; reroll a few times.
         int x = 0;
@@ -365,13 +390,69 @@ public class CollectorController {
             Integer fails = barrenRegions.get(regionKey(x, z));
             if (fails == null || fails < BARREN_THRESHOLD) break;
         }
-        // Some attempts go to the SURFACE to photograph confusers (flowers,
-        // redstone fixtures) as hard negatives; the rest dig for ore.
-        huntingConfusers = session.hardNegativeRatio > 0 && rng.nextDouble() < session.hardNegativeRatio;
         int y = huntingConfusers ? 160 : pickY();  // drop onto the surface from above
         sp.setPositionAndUpdate(x + 0.5, y, z + 0.5);
         waitTicks = 0;
         state = State.DATA_WAIT;
+    }
+
+    /** Move the search center to fresh terrain and re-aim the server scanner. */
+    private void relocateSearch() {
+        double angle = rng.nextDouble() * Math.PI * 2;
+        int jump = session.radius + rng.nextInt(session.radius + 1);
+        wanderCenter = wanderCenter.add(
+                (int) (Math.cos(angle) * jump), 0, (int) (Math.sin(angle) * jump));
+        sendLog("Area looks tapped out - moving search center to "
+                + wanderCenter.getX() + ", " + wanderCenter.getZ());
+        reconfigureLocator();
+    }
+
+    /** Drain the server-found ore queue to the next unvisited position. */
+    private BlockPos pollUnvisitedOre() {
+        for (int i = 0; i < 512; i++) {
+            BlockPos p = locator.poll();
+            if (p == null) return null;
+            if (!session.avoidRevisits || !visited.contains(p)) return p;
+        }
+        return null;
+    }
+
+    /** Schedule a server-thread chunk scan when the ore queue runs low. */
+    private void requestRefill() {
+        final net.minecraft.server.MinecraftServer server = mc.getIntegratedServer();
+        if (server == null || locator.isScanning() || locator.exhausted()) return;
+        if (locator.available() >= PRESCAN_REFILL_AT) return;
+        locator.markScanning();
+        server.addScheduledTask(new Runnable() {
+            @Override
+            public void run() {
+                locator.scanBatch(server.worldServers[0], PRESCAN_BATCH_CHUNKS);
+            }
+        });
+    }
+
+    /** Aim the server scanner at the current wander center / selected classes. */
+    private void reconfigureLocator() {
+        int ulo = 255;
+        int uhi = 0;
+        for (String c : session.classes) {
+            int[] band = OreScanner.yBand(c);
+            if (band != null) {
+                ulo = Math.min(ulo, band[0]);
+                uhi = Math.max(uhi, band[1]);
+            }
+        }
+        if (ulo > uhi) {  // no known bands - use the user range
+            ulo = session.yMin;
+            uhi = session.yMax;
+        }
+        int lo = Math.max(MIN_SAFE_Y, Math.max(session.yMin, ulo));
+        int hi = Math.min(254, Math.min(session.yMax, uhi));
+        if (lo > hi) {
+            lo = MIN_SAFE_Y;
+            hi = Math.min(254, session.yMax);
+        }
+        locator.configure(wanderCenter, session.radius, session.classSet(), lo, hi);
     }
 
     /**
