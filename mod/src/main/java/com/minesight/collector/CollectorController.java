@@ -26,6 +26,8 @@ public class CollectorController {
 
     private static final int SCAN_RADIUS = 20;
     private static final int CAPTURE_RADIUS = 16;
+    /** Never teleport into the bedrock layer (y0-4) - you'd be encased. */
+    private static final int MIN_SAFE_Y = 5;
 
     private final Minecraft mc = Minecraft.getMinecraft();
     private final Random rng = new Random();
@@ -234,6 +236,11 @@ public class CollectorController {
                 // give it a few seconds before giving up.
                 waitTicks++;
                 if (hasChunkData(mc.thePlayer.getPosition()) && waitTicks >= 5) {
+                    // Now that real terrain heights are known, pull ore hunts
+                    // down out of any open sky (ocean/mountain columns).
+                    if (!huntingConfusers) {
+                        clampBelowSurface();
+                    }
                     state = State.FIND_CAVE;
                 } else if (waitTicks > 80) {
                     state = State.NEXT_TARGET;
@@ -328,6 +335,28 @@ public class CollectorController {
         sp.setPositionAndUpdate(x + 0.5, y, z + 0.5);
         waitTicks = 0;
         state = State.DATA_WAIT;
+    }
+
+    /**
+     * If an ore-hunt teleport landed at or above the surface (open sky over an
+     * ocean, a tall column, or just a high y_max), pull it back down into the
+     * rock where caves and ore actually are - never below bedrock. Runs once
+     * the chunk's real heights are known.
+     */
+    private void clampBelowSurface() {
+        BlockPos pos = mc.thePlayer.getPosition();
+        int surface = mc.theWorld.getHeight(pos).getY();  // first air above ground
+        if (pos.getY() < surface - 1) {
+            return;  // already underground
+        }
+        EntityPlayerMP sp = serverPlayer();
+        if (sp == null) {
+            return;
+        }
+        int hi = Math.min(Math.max(MIN_SAFE_Y, surface - 2), Math.min(254, session.yMax));
+        int lo = Math.max(MIN_SAFE_Y, Math.min(session.yMin, hi));
+        int y = lo + rng.nextInt(Math.max(1, hi - lo + 1));
+        sp.setPositionAndUpdate(pos.getX() + 0.5, y, pos.getZ() + 0.5);
     }
 
     /**
@@ -427,8 +456,8 @@ public class CollectorController {
      */
     private int pickY() {
         // The GUI allows modern-MC depths (-64..320); clamp to what a 1.8.9
-        // world actually has (0..255) so out-of-range settings still work.
-        int userLo = Math.max(1, Math.min(254, session.yMin));
+        // world actually has, never into bedrock (y0-4).
+        int userLo = Math.max(MIN_SAFE_Y, Math.min(254, session.yMin));
         int userHi = Math.max(userLo, Math.min(254, session.yMax));
         // Hunt the neediest class (fewest boxes / lowest target fill), so
         // teleport depths chase exactly the data the session still needs.

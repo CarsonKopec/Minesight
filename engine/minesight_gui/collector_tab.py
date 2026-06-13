@@ -109,7 +109,9 @@ class CollectorTab(QWidget):
         ytip = (
             "Teleport depth range. Accepts modern-MC values (-64 to 320);\n"
             "1.8.9 worlds only span 0-255, so out-of-range values are clamped\n"
-            "in-game. Each hop also targets the spawn band of the ore it hunts."
+            "in-game. Each hop also targets the spawn band of the ore it hunts.\n"
+            "The mod never lands in bedrock (y0-4) or open sky - sky teleports\n"
+            "are pulled down into the terrain automatically."
         )
         self.y_min.setToolTip(ytip)
         self.y_max.setToolTip(ytip)
