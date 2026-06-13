@@ -41,6 +41,11 @@ log = logging.getLogger("minesight.gui.collector")
 
 COLLECTOR_PORT = 8766
 
+# Pool used for captures streamed outside a GUI-armed session - i.e. the
+# MineSight 2.0 flow, where the Folia plugin drives collection and the Fabric
+# client streams frames in. Lands under datasets/<this>/pool.
+STREAM_SESSION = "farm-stream"
+
 # Hard-negative confuser categories: (mod key, label, default-on)
 CONFUSER_TYPES = [
     ("flowers", "Flowers", True),
@@ -608,13 +613,14 @@ class CollectorTab(QWidget):
                 self.inspector.on_live_capture(self._session_name, data["file"])
             self.log.append_line(f"#{cid} saved {data.get('file')} ({data.get('boxes')} boxes)")
         elif msg_type == "collect_image":
-            # A remote client streamed a capture; write it into the pool.
-            if not self._session_name:
-                return
+            # A remote client streamed a capture; write it into the pool. With a
+            # GUI-armed session it goes to that pool; otherwise (the 2.0
+            # plugin-driven flow) it lands in the dedicated farm-stream pool.
+            session = self._session_name or STREAM_SESSION
             fname = Path(str(data.get("file", ""))).name
             if not fname.endswith(".png"):
                 return
-            pool = collect_io.pool_dir(self._session_name)
+            pool = collect_io.pool_dir(session)
             (pool / "images").mkdir(parents=True, exist_ok=True)
             (pool / "labels").mkdir(parents=True, exist_ok=True)
             try:
@@ -622,6 +628,8 @@ class CollectorTab(QWidget):
                 (pool / "labels" / (Path(fname).stem + ".txt")).write_text(
                     data.get("labels", ""), encoding="utf-8"
                 )
+                if not self._session_name:
+                    self.log.append_line(f"[#{cid} streamed {fname} -> {session}]")
             except Exception as e:
                 self.log.append_line(f"[#{cid}] failed to store streamed image: {e}")
         elif msg_type == "collect_log":

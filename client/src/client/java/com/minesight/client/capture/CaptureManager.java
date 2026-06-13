@@ -2,6 +2,7 @@ package com.minesight.client.capture;
 
 import com.minesight.client.net.FarmPayload;
 import com.minesight.client.net.FarmProtocol;
+import com.minesight.client.net.GuiUploader;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.Framebuffer;
@@ -17,6 +18,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -48,6 +51,7 @@ public final class CaptureManager {
 
     private final MinecraftClient mc;
     private final DatasetWriter writer;
+    private final GuiUploader uploader = new GuiUploader();
 
     // Pending request state (client-thread only).
     private FarmProtocol.CaptureRequest pending;
@@ -63,6 +67,7 @@ public final class CaptureManager {
     public void onCapture(FarmProtocol.CaptureRequest req) {
         this.pending = req;
         this.waited = 0;
+        uploader.ensureConnected();  // best-effort; falls back to local-only
         if (req.hideHud()) {
             this.prevHudHidden = mc.options.hudHidden;
             mc.options.hudHidden = true;
@@ -130,11 +135,26 @@ public final class CaptureManager {
             if (saved != null) {
                 LOG.info("Capture {} saved {} box(es) -> {}",
                         req.shotId(), visible.size(), saved.getName());
+                streamToGui(saved, visible, width, height);
             } else {
                 LOG.warn("Capture {}: write failed", req.shotId());
             }
             finish(saved != null, visible.size());
         });
+    }
+
+    /** Stream a saved frame to the Control Panel if connected (local copy stays). */
+    private void streamToGui(File png, List<DatasetWriter.Box> boxes, int width, int height) {
+        if (!uploader.isConnected()) {
+            return;
+        }
+        try {
+            byte[] bytes = Files.readAllBytes(png.toPath());
+            String labels = DatasetWriter.buildLabels(boxes, width, height);
+            uploader.uploadImage(png.getName(), bytes, labels, boxes.size());
+        } catch (IOException e) {
+            LOG.warn("GUI upload: could not read {} ({})", png.getName(), e.getMessage());
+        }
     }
 
     /** Perspective matrix matching MC's world camera (FOV from options, world aspect). */

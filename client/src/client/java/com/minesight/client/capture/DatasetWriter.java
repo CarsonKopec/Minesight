@@ -60,8 +60,35 @@ public final class DatasetWriter {
         }
         int w = image.getWidth();
         int h = image.getHeight();
-        String name = System.currentTimeMillis() + "_" + shotId;
+        String labels = buildLabels(boxes, w, h);
+        if (labels.isEmpty()) {
+            return null;
+        }
+        try {
+            File png = new File(imagesDir, fileName(shotId));
+            image.writeTo(png);
+            Files.write(new File(labelsDir, baseName(png) + ".txt").toPath(),
+                    labels.getBytes(StandardCharsets.UTF_8));
+            writeClassesOnce();
+            return png;
+        } catch (IOException e) {
+            return null;
+        }
+    }
 
+    /** Image file name for a shot: {@code collected_<ts>_<shotId>.png}. */
+    public static String fileName(int shotId) {
+        return "collected_" + System.currentTimeMillis() + "_" + shotId + ".png";
+    }
+
+    private static String baseName(File png) {
+        String n = png.getName();
+        int dot = n.lastIndexOf('.');
+        return dot < 0 ? n : n.substring(0, dot);
+    }
+
+    /** Build the YOLO label text ({@code class cx cy w h} per line, normalized). */
+    public static String buildLabels(List<Box> boxes, int width, int height) {
         StringBuilder label = new StringBuilder();
         for (Box b : boxes) {
             int cls = classIndex(b.label());
@@ -69,26 +96,14 @@ public final class DatasetWriter {
                 continue;  // unknown class - skip rather than write a bad index
             }
             GroundTruthProjector.Rect r = b.rect();
-            double cx = ((r.x0() + r.x1()) / 2.0) / w;
-            double cy = ((r.y0() + r.y1()) / 2.0) / h;
-            double bw = r.width() / w;
-            double bh = r.height() / h;
+            double cx = ((r.x0() + r.x1()) / 2.0) / width;
+            double cy = ((r.y0() + r.y1()) / 2.0) / height;
+            double bw = r.width() / width;
+            double bh = r.height() / height;
             label.append(cls)
                     .append(String.format(Locale.ROOT, " %.6f %.6f %.6f %.6f%n", cx, cy, bw, bh));
         }
-        if (label.length() == 0) {
-            return null;
-        }
-        try {
-            File png = new File(imagesDir, name + ".png");
-            image.writeTo(png);
-            Files.write(new File(labelsDir, name + ".txt").toPath(),
-                    label.toString().getBytes(StandardCharsets.UTF_8));
-            writeClassesOnce();
-            return png;
-        } catch (IOException e) {
-            return null;
-        }
+        return label.toString();
     }
 
     private void writeClassesOnce() {

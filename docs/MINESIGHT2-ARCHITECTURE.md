@@ -137,9 +137,12 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
   backlog #7): run `/msf scan` then `/msf capture <n>` and inspect the PNGs +
   labels under `.minecraft/minesight/captures/`. The FOV/near constants in
   `CaptureManager` are the alignment knobs.
-- ⏳ **Image upload to the GUI** not wired yet — the client writes the dataset
-  locally for now (same as the 1.8.9 `DatasetWriter`); the `collect_image` WS
-  upload is the next integration step.
+- ✅ **Image upload to the GUI** wired — client `GuiUploader` (JDK `WebSocket`,
+  no shaded lib) streams each saved frame as `collect_image` to the Control
+  Panel's collector WS (default `ws://127.0.0.1:8766`, override
+  `-Dminesight.guiUrl`). Best-effort + lazy reconnect; the durable local copy
+  under `.minecraft/minesight/captures/` is always written too. The GUI accepts
+  these outside a 1.8.9 session into a dedicated `farm-stream` dataset pool.
 
 ### Build / run
 - Plugin: `cd plugin && ./gradlew build` → `plugin/build/libs/minesightfarm-2.0.0.jar` into the Folia `plugins/` folder.

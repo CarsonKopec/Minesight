@@ -160,6 +160,12 @@ connections), captures are streamed instead of written to `output_dir`:
 {"type": "collect_image", "file": "collected_...png", "png": "<base64 PNG>", "labels": "0 0.5 0.5 0.1 0.1\n"}
 ```
 
+The MineSight **2.0** Fabric client streams the same `collect_image` message
+(`"client": "fabric-2.0"` in its `collector_hello`). There the Folia plugin
+drives collection, not the GUI, so the client ignores `collect_start`/`stop`.
+When no GUI session is armed, streamed images land in a dedicated `farm-stream`
+dataset pool instead of being dropped.
+
 Mod → GUI:
 
 ```json
