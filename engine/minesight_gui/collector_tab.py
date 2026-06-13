@@ -41,6 +41,15 @@ log = logging.getLogger("minesight.gui.collector")
 
 COLLECTOR_PORT = 8766
 
+# Hard-negative confuser categories: (mod key, label, default-on)
+CONFUSER_TYPES = [
+    ("flowers", "Flowers", True),
+    ("foliage", "Grass/Leaves", True),
+    ("mushrooms", "Mushrooms", True),
+    ("redstone", "Redstone", True),
+    ("crops", "Pumpkins/Cacti", False),
+]
+
 # Canonical order defines the label indices the mod writes.
 COLLECTIBLE = [
     ("diamond_ore", True),
@@ -172,6 +181,23 @@ class CollectorTab(QWidget):
             "The direct fix for 'red flowers detected as redstone'. Try 0.2-0.3."
         )
         grid.addWidget(self.hard_negatives, 2, 5)
+
+        conf_label = QLabel("Confuser types:")
+        conf_label.setToolTip(
+            "Which look-alike blocks the hard-negative shots may target, so it's\n"
+            "not always flowers. Uncheck a type to stop collecting it."
+        )
+        grid.addWidget(conf_label, 4, 0)
+        conf_row = QHBoxLayout()
+        self.confuser_checks: dict[str, QCheckBox] = {}
+        for cat, text, default in CONFUSER_TYPES:
+            cb = QCheckBox(text)
+            cb.setChecked(default)
+            self.confuser_checks[cat] = cb
+            conf_row.addWidget(cb)
+        conf_row.addStretch(1)
+        grid.addLayout(conf_row, 4, 1, 1, 5)
+
         classes_label = QLabel("Classes (+ box goals):")
         classes_label.setToolTip(
             "Tick the ores to photograph. The number next to each is an optional\n"
@@ -281,6 +307,7 @@ class CollectorTab(QWidget):
             "collector/classGoals",
             ",".join(f"{label}:{spin.value()}" for label, spin in self.class_goals.items()),
         )
+        s.setValue("collector/confusers", ",".join(self._confuser_categories()))
         self.log.append_line("[settings saved]")
 
     def _load_settings(self) -> None:
@@ -305,6 +332,11 @@ class CollectorTab(QWidget):
                     label, _, value = part.partition(":")
                     if label in self.class_goals and value.isdigit():
                         self.class_goals[label].setValue(int(value))
+        saved_conf = s.value("collector/confusers")
+        if saved_conf is not None:
+            chosen = set(str(saved_conf).split(",")) if saved_conf else set()
+            for cat, cb in self.confuser_checks.items():
+                cb.setChecked(cat in chosen)
 
     def _apply_live(self) -> None:
         self._save_settings()
@@ -327,6 +359,7 @@ class CollectorTab(QWidget):
             "fov_max": self.fov_max.value(),
             "negative_ratio": self.negatives.value(),
             "hard_negative_ratio": self.hard_negatives.value(),
+            "confuser_categories": self._confuser_categories(),
             "settle_ticks": self.settle.value(),
             "avoid_revisits": self.skip_visited.isChecked(),
             "class_targets": self._class_targets(len(in_session)),
@@ -461,6 +494,9 @@ class CollectorTab(QWidget):
                 f"  (also short but not collectible from 1.8.9 worlds: {', '.join(not_collectible)})"
             )
 
+    def _confuser_categories(self) -> list[str]:
+        return [cat for cat, cb in self.confuser_checks.items() if cb.isChecked()]
+
     def _class_targets(self, n_clients: int) -> dict[str, int]:
         """Per-client share of each class goal (0-goals omitted)."""
         checked = set(self._checked_classes())
@@ -504,6 +540,7 @@ class CollectorTab(QWidget):
                 "fov_max": self.fov_max.value(),
                 "negative_ratio": self.negatives.value(),
                 "hard_negative_ratio": self.hard_negatives.value(),
+                "confuser_categories": self._confuser_categories(),
                 "settle_ticks": self.settle.value(),
                 "avoid_revisits": self.skip_visited.isChecked(),
                 "class_targets": self._class_targets(len(clients)),

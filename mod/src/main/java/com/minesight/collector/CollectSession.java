@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -30,6 +31,9 @@ public class CollectSession {
      * the model not to fire on reddish/colorful non-ore clusters.
      */
     public double hardNegativeRatio = 0.0;
+    /** Which confuser categories hard-negative shots may target. */
+    public Set<String> confuserCategories = new HashSet<String>(
+            Arrays.asList("flowers", "foliage", "mushrooms", "redstone"));
     /** Minimum ticks to wait after a teleport so the chunk renderer catches up. */
     public int settleTicks = 40;
     /** Skip ores already captured in this world (persistent history). */
@@ -80,6 +84,13 @@ public class CollectSession {
         if (o.has("fov_max")) fovMax = o.get("fov_max").getAsInt();
         if (o.has("negative_ratio")) negativeRatio = o.get("negative_ratio").getAsDouble();
         if (o.has("hard_negative_ratio")) hardNegativeRatio = o.get("hard_negative_ratio").getAsDouble();
+        if (o.has("confuser_categories")) {
+            confuserCategories.clear();
+            JsonArray arr = o.getAsJsonArray("confuser_categories");
+            for (int i = 0; i < arr.size(); i++) {
+                confuserCategories.add(arr.get(i).getAsString());
+            }
+        }
         if (o.has("settle_ticks")) settleTicks = o.get("settle_ticks").getAsInt();
         if (o.has("avoid_revisits")) avoidRevisits = o.get("avoid_revisits").getAsBoolean();
         if (o.has("class_targets")) {

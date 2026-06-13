@@ -641,8 +641,8 @@ public class CollectorController {
      * which the capture handler will still label correctly.
      */
     private void scanConfusers() {
-        List<BlockPos> confusers =
-                OreScanner.scanConfusers(mc.theWorld, mc.thePlayer.getPosition(), SCAN_RADIUS);
+        List<BlockPos> confusers = OreScanner.scanConfusers(
+                mc.theWorld, mc.thePlayer.getPosition(), SCAN_RADIUS, session.confuserCategories);
         if (confusers.isEmpty()) {
             state = State.NEXT_TARGET;  // bare biome (desert/ocean) - reroll
             return;
