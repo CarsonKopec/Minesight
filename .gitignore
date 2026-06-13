@@ -30,6 +30,9 @@ mod/run/
 mod/run-client*/
 mod/*/run/
 mod/*/run-client*/
+# Safety net: dev run dirs must never escape mod/ to the repo root
+/run/
+/run-client*/
 
 # IDE
 .claude/
