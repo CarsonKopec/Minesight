@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QListWidget,
     QMessageBox,
@@ -52,6 +53,14 @@ class DatasetsTab(QWidget):
         )
         self.rebalance_btn.clicked.connect(self._rebalance)
         lv.addWidget(self.rebalance_btn)
+        self.merge_btn = QPushButton("📥 Merge into…")
+        self.merge_btn.setToolTip(
+            "Copy every image in the selected dataset into another dataset,\n"
+            "remapping classes by name (classes the target lacks are added).\n"
+            "Then rebalance the target's splits for a clean train/valid/test."
+        )
+        self.merge_btn.clicked.connect(self._merge)
+        lv.addWidget(self.merge_btn)
         refresh = QPushButton("⟳ Refresh")
         refresh.clicked.connect(self.refresh)
         lv.addWidget(refresh)
@@ -125,6 +134,38 @@ class DatasetsTab(QWidget):
             f"Done: train {counts['train']}, valid {counts['valid']}, test {counts['test']}.",
         )
         self._show_dataset(name)
+        self.datasetsChanged.emit()
+
+    def _merge(self) -> None:
+        item = self.listw.currentItem()
+        if item is None:
+            return
+        src_name = item.text()
+        targets = [d.name for d in list_datasets() if d.name != src_name]
+        if not targets:
+            QMessageBox.information(self, "MineSight", "Need another dataset to merge into.")
+            return
+        target, ok = QInputDialog.getItem(
+            self, "Merge dataset", f"Copy '{src_name}' into:", targets, len(targets) - 1, False
+        )
+        if not ok:
+            return
+        try:
+            copied = collect_io.merge_into(DATASETS_DIR / src_name, DATASETS_DIR / target)
+        except Exception as e:
+            QMessageBox.warning(self, "MineSight", str(e))
+            return
+        # Offer to clear out the now-merged source to keep the list tidy.
+        remove = QMessageBox.question(
+            self, "Merge dataset",
+            f"Merged {copied} image(s) into '{target}'.\n\nDelete the source '{src_name}' now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if remove == QMessageBox.StandardButton.Yes:
+            import shutil
+            shutil.rmtree(DATASETS_DIR / src_name, ignore_errors=True)
+        self.refresh()
         self.datasetsChanged.emit()
 
     def _render(self, h: DatasetHealth) -> None:
