@@ -195,8 +195,10 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
    compile); ⏳ verify/calibrate captures in-game; ⏳ image upload to the GUI.
 3. **Overlay/world port:** ✅ detection overlay (engine WS + HUD boxes + F8/F9),
    world memory + anchoring, through-wall markers, radar (F7). Done.
-4. **Polish:** parity with 1.8.9 features (visited history, hard negatives,
-   smart targeting, multi-client) on the new architecture.
+4. **Polish (in progress):** ✅ multi-client orchestration (all connected cameras
+   drain one ore queue in parallel toward a shared target) + ✅ visited history
+   (per-world `VisitedStore`, skip/record, `collect_clear_history`); ⏳ hard
+   negatives (needs a surface confuser scan) + per-class goals remain.
 
 ## Open risks to validate in the PoC
 

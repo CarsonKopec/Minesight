@@ -98,6 +98,7 @@ final class GuiLink {
                 case "collect_start" -> plugin.onCollectorSettings(obj, true);
                 case "collect_update" -> plugin.onCollectorSettings(obj, false);
                 case "collect_stop" -> plugin.onCollectorStop();
+                case "collect_clear_history" -> plugin.onCollectorClearHistory();
                 default -> {
                 }
             }

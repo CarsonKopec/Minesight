@@ -43,6 +43,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
 
     private FoliaOreLocator locator;
     private volatile CaptureSession session;
+    private VisitedStore visited;
     private GuiLink guiLink;
 
     @Override
@@ -51,6 +52,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         getServer().getMessenger().registerIncomingPluginChannel(this, CHANNEL, this);
 
         locator = new FoliaOreLocator(this);
+        visited = new VisitedStore(this);
         guiLink = new GuiLink(this);
 
         // Paper plugins don't support YAML command declarations; register the
@@ -84,6 +86,9 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
     public void onDisable() {
         if (locator != null) {
             locator.stop();
+        }
+        if (visited != null) {
+            visited.save();
         }
         getServer().getMessenger().unregisterIncomingPluginChannel(this);
         getServer().getMessenger().unregisterOutgoingPluginChannel(this);
@@ -145,6 +150,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         }
         int[] band = OreCatalog.yBand(ore);
         Location at = player.getLocation();
+        visited.load(at.getWorld().getName());
         locator.clearResults();
         locator.configure(at.getWorld(), at.getBlockX(), at.getBlockZ(), radius,
                 Set.of(ore), band[0], band[1]);
@@ -175,8 +181,8 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
                 sender.sendMessage("MineSight: count must be a number; using " + count + ".");
             }
         }
-        session = new CaptureSession(this, locator, player.getUniqueId(), count, true);
-        sender.sendMessage("MineSight: capturing " + count + " frame(s) from queued ore. /minesightfarm status to watch.");
+        session = new CaptureSession(this, locator, visited, true, count, true);
+        sender.sendMessage("MineSight: capturing " + count + " frame(s) across all cameras. /minesightfarm status to watch.");
         return true;
     }
 
@@ -232,7 +238,16 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
                 s.stop();
                 session = null;
             }
+            visited.save();
             getLogger().info("Collector: stopped by GUI.");
+        });
+    }
+
+    /** Called by {@link GuiLink} (WS thread) for collect_clear_history. */
+    void onCollectorClearHistory() {
+        getServer().getGlobalRegionScheduler().execute(this, () -> {
+            visited.clear();
+            getLogger().info("Collector: visited history cleared.");
         });
     }
 
@@ -246,19 +261,21 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         int yLo = optInt(s, "y_min", -64);
         int yHi = optInt(s, "y_max", 72);
         int target = optInt(s, "target", 0);
+        boolean avoidRevisits = !s.has("avoid_revisits") || s.get("avoid_revisits").getAsBoolean();
         Set<String> wanted = parseClasses(s);
         // Reading the camera's location must run on its region thread (Folia).
         camera.getScheduler().run(this, t -> {
             Location loc = camera.getLocation();
+            visited.load(loc.getWorld().getName());
             locator.clearResults();
             locator.configure(loc.getWorld(), loc.getBlockX(), loc.getBlockZ(), radius, wanted, yLo, yHi);
             locator.start();
             if (start && target > 0 && (session == null || session.isDone())) {
-                session = new CaptureSession(this, locator, camera.getUniqueId(), target, true);
+                session = new CaptureSession(this, locator, visited, avoidRevisits, target, true);
             }
             getLogger().info("Collector " + (start ? "start" : "live update") + ": radius "
                     + radius + ", ore " + wanted + ", Y " + yLo + ".." + yHi
-                    + (start && target > 0 ? ", target " + target : ""));
+                    + (start && target > 0 ? ", target " + target : "") + ", revisits=" + !avoidRevisits);
         }, null);
     }
 
