@@ -1,0 +1,12 @@
+[
+  {
+    "modid": "${modid}",
+    "name": "MineSight Collector",
+    "description": "Automated, ground-truth dataset collection driven by the Control Panel: teleports a spectator to scanned ore and saves labeled screenshots. Independent of the detection overlay.",
+    "version": "${version}",
+    "mcversion": "${mcversion}",
+    "authorList": ["kopec"],
+    "dependencies": ["minesightcore"],
+    "requiredMods": ["minesightcore"]
+  }
+]

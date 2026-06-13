@@ -157,10 +157,12 @@ class FarmAgentWindow(QMainWindow):
             marker.unlink()
         self._patch_options(run_dir, self.mute.isChecked())
 
+        # Farm clients run the collector mod (core + collector). ../run-clientN
+        # resolves to mod/run-clientN so the marker/options files line up.
         args = [
-            "/c", "gradlew.bat", "runClient", "--console=plain",
+            "/c", "gradlew.bat", ":collector:runClient", "--console=plain",
             "--project-cache-dir", f".gradle-client{idx}",
-            f"-Pminesight.runDir=run-client{idx}",
+            f"-Pminesight.runDir=../run-client{idx}",
         ]
         java_home = self.java_home.text().strip()
         if java_home:

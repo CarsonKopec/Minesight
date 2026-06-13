@@ -24,3 +24,5 @@ plugins {
 }
 
 rootProject.name = "minesight"
+
+include(":core", ":detection", ":world", ":collector")

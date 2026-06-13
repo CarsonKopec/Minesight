@@ -22,10 +22,14 @@ engine/logs/
 
 # Mod build output (mod/.gitignore also covers these)
 mod/build/
+mod/*/build/
 mod/.gradle/
 mod/.gradle-client*/
+mod/*/.gradle/
 mod/run/
 mod/run-client*/
+mod/*/run/
+mod/*/run-client*/
 
 # IDE
 .claude/

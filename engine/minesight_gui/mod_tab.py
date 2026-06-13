@@ -114,17 +114,28 @@ class ModTab(QWidget):
 
     # --- build / install ------------------------------------------------------
 
-    def _newest_jar(self) -> Path | None:
-        libs = MOD_DIR / "build" / "libs"
-        jars = sorted(libs.glob("*.jar"), key=lambda p: p.stat().st_mtime, reverse=True) if libs.exists() else []
-        return jars[0] if jars else None
+    # The four module jars (final remapped output), one per subproject.
+    _MODULES = ("core", "detection", "world", "collector")
+
+    def _module_jars(self) -> list[Path]:
+        jars = []
+        for m in self._MODULES:
+            libs = MOD_DIR / m / "build" / "libs"
+            if not libs.exists():
+                continue
+            cands = [p for p in libs.glob(f"minesight{m}-*.jar")
+                     if not any(t in p.name for t in ("-dev", "without-deps", "non-obfuscated"))]
+            if cands:
+                jars.append(max(cands, key=lambda p: p.stat().st_mtime))
+        return jars
 
     def _jar_status(self) -> str:
-        jar = self._newest_jar()
-        if jar:
-            built = time.strftime("%Y-%m-%d %H:%M", time.localtime(jar.stat().st_mtime))
-            return f"Latest jar: {jar.name}  (built {built})"
-        return "No jar built yet."
+        jars = self._module_jars()
+        if jars:
+            newest = max(j.stat().st_mtime for j in jars)
+            built = time.strftime("%Y-%m-%d %H:%M", time.localtime(newest))
+            return f"{len(jars)}/4 module jars built (latest {built})"
+        return "No jars built yet."
 
     def _build(self) -> None:
         if self.proc.running:
@@ -133,9 +144,9 @@ class ModTab(QWidget):
         self.proc.start("cmd.exe", ["/c", "gradlew.bat", "build", "--console=plain"], str(MOD_DIR))
 
     def _install(self) -> None:
-        jar = self._newest_jar()
-        if not jar:
-            self.status.setText("No jar to install - build first.")
+        jars = self._module_jars()
+        if not jars:
+            self.status.setText("No jars to install - build first.")
             return
         default = self.settings.value(
             "modsDir", os.path.join(os.environ.get("APPDATA", ""), ".minecraft", "mods")
@@ -144,12 +155,16 @@ class ModTab(QWidget):
         if not target:
             return
         self.settings.setValue("modsDir", target)
-        # Remove older minesight jars so two versions never load together.
-        for old in Path(target).glob("minesight-*.jar"):
+        # Remove older MineSight jars so two versions never load together.
+        for old in Path(target).glob("minesight*.jar"):
             old.unlink()
-        shutil.copy2(jar, target)
-        self.status.setText(f"Installed {jar.name} → {target}")
-        self.log.append_line(f"[installed {jar.name} to {target}]")
+        for jar in jars:
+            shutil.copy2(jar, target)
+        names = ", ".join(j.name for j in jars)
+        self.status.setText(f"Installed {len(jars)} jar(s) → {target}")
+        self.log.append_line(f"[installed to {target}: {names}]")
+        if len(jars) < 4:
+            self.log.append_line("[note: core is required; build all four with the Build button]")
 
     def _on_line(self, line: str) -> None:
         self.log.append_line(line)
@@ -188,11 +203,14 @@ class ModTab(QWidget):
             return
         idx = self._launch_queue.pop(0)
         base = self.world_base.text().strip()
+        # Farm clients run the collector mod only (core + collector). runDir is
+        # ../run-clientN so it resolves to mod/run-clientN (the collector
+        # subproject dir + ..), keeping marker/options paths at the mod root.
         args = [
-            "/c", "gradlew.bat", "runClient", "--console=plain",
+            "/c", "gradlew.bat", ":collector:runClient", "--console=plain",
             # Separate project caches let gradle builds run in parallel.
             "--project-cache-dir", f".gradle-client{idx}",
-            f"-Pminesight.runDir=run-client{idx}",
+            f"-Pminesight.runDir=../run-client{idx}",
         ]
         # The mod reads this file from its run dir and auto-opens the world;
         # a file is reliable where gradle property forwarding is not.
@@ -235,13 +253,17 @@ class ModTab(QWidget):
         self._update_running()
 
     def launch_test_client(self) -> None:
-        """One plain client in the default run dir - for playing with live detection."""
+        """One full play client (core + detection + world) for testing the model."""
         proc = ManagedProcess(self)
         proc.line.connect(lambda line: self.log.append_line(f"[TEST] {line}"))
         proc.finished.connect(lambda code: self.log.append_line(f"[test client exited ({code})]"))
-        proc.start("cmd.exe", ["/c", "gradlew.bat", "runClient", "--console=plain"], str(MOD_DIR))
+        # :world:runClient pulls in detection + core; runDir ../run -> mod/run.
+        proc.start("cmd.exe",
+                   ["/c", "gradlew.bat", ":world:runClient", "--console=plain",
+                    "-Pminesight.runDir=../run"],
+                   str(MOD_DIR))
         self._client_procs.append((0, proc))
-        self.log.append_line("[test client starting → run/ (no auto-world; pick one in the menu)]")
+        self.log.append_line("[test client starting → mod/run (detection + world; pick a world in the menu)]")
 
     def stop_clients(self) -> None:
         self._launch_queue = []

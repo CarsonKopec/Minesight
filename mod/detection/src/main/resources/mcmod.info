@@ -1,0 +1,12 @@
+[
+  {
+    "modid": "${modid}",
+    "name": "MineSight Detection",
+    "description": "Live 2D ore-detection overlay: connects to the MineSight Python engine, streams player state, and renders detection boxes. F8 cycles the overlay, F9 flags a frame for review.",
+    "version": "${version}",
+    "mcversion": "${mcversion}",
+    "authorList": ["kopec"],
+    "dependencies": ["minesightcore"],
+    "requiredMods": ["minesightcore"]
+  }
+]

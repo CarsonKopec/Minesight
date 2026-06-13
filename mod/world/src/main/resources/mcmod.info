@@ -1,0 +1,12 @@
+[
+  {
+    "modid": "${modid}",
+    "name": "MineSight World",
+    "description": "World awareness: persistent per-world ore memory, world-anchored 3D markers, and the HUD radar/minimap (F7). Needs MineSight Detection for the live data.",
+    "version": "${version}",
+    "mcversion": "${mcversion}",
+    "authorList": ["kopec"],
+    "dependencies": ["minesightcore", "minesightdetection"],
+    "requiredMods": ["minesightcore", "minesightdetection"]
+  }
+]

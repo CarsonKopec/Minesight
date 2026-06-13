@@ -25,7 +25,7 @@ ongoing quality backlog in [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
 | `engine/minesight_gui/` | PySide6 Control Panel (models, datasets, training, engine, mod) |
 | `engine/tools/` | One-off dataset tooling (e.g. the v3 rebuild script) |
 | `engine/tests/` | pytest suite for the data pipeline — `cd engine && python -m pytest` |
-| `mod/` | Forge 1.8.9 client mod (modern Gradle via Essential's architectury-loom) |
+| `mod/` | Forge 1.8.9 mods — multi-module Gradle build: `core` (shared lib), `detection` (2D overlay), `world` (memory/3D/radar), `collector` (dataset farming). Load only what you need; all require `core`. |
 | `MineSight-GUI.bat` | Double-click launcher for the Control Panel |
 | `MineSight-Farm.bat` | Launcher for remote collection-farm machines |
 | `docs/PROTOCOL.md` | WebSocket JSON protocol reference |
@@ -98,9 +98,11 @@ and the session is controlled entirely from the host.
   manually launched games embed on request and can be released back to the
   desktop at any time. Keep a window released if the detection engine should
   screen-capture it.
-- **Mod tab** — build/install the jar, plus a **multi-client launcher**: pick a
-  client count and world base name, and it spins up N sandboxed dev clients
-  (`run-clientN/`), each auto-opening its own world (created on first launch).
+- **Mod tab** — build all four module jars and install them together into your
+  `.minecraft/mods` (a play PC loads core+detection+world; a farm PC loads
+  core+collector). **Launch test client** runs the full play stack
+  (`:world:runClient`); the **multi-client launcher** spins up N sandboxed farm
+  clients (`:collector:runClient`, `run-clientN/`), each auto-opening its own world.
 - **Logs tab** — the Control Panel's own application log, live, with a Debug
   toggle. Full DEBUG detail is always written to `engine/logs/` (rotating
   files: `control-panel.log`, `engine.log`); the engine also logs there and
