@@ -25,9 +25,11 @@ import java.util.PriorityQueue;
  */
 public final class PathFinder {
 
-    private static final int MAX_EXPANSIONS = 12000;
+    private static final int MAX_EXPANSIONS = 15000;
     private static final int MAX_DROP = 3;
     private static final int MAX_RANGE = 96;
+    /** Cost of mining one block, in walk-steps - high enough to prefer walking. */
+    private static final double MINE_COST = 5.0;
 
     private final MinecraftClient mc;
 
@@ -88,7 +90,7 @@ public final class PathFinder {
 
     private List<BlockPos> neighbors(BlockPos pos, BlockPos start) {
         int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
-        List<BlockPos> out = new ArrayList<>(8);
+        List<BlockPos> out = new ArrayList<>(10);
         for (int[] d : dirs) {
             int dx = d[0];
             int dz = d[1];
@@ -101,20 +103,19 @@ public final class PathFinder {
                 continue;  // no corner cutting
             }
             BlockPos flat = pos.add(dx, 0, dz);
-            if (standable(flat)) {
+            boolean added = false;
+            if (standable(flat)) {                                  // walk
                 out.add(flat);
-                continue;
-            }
-            BlockPos up = pos.add(dx, 1, dz);
-            if (standable(up) && clear(pos.up().up())) {
-                out.add(up);
-                continue;
-            }
-            if (clear(flat)) {
+                added = true;
+            } else if (standable(pos.add(dx, 1, dz)) && clear(pos.up().up())) {  // step up
+                out.add(pos.add(dx, 1, dz));
+                added = true;
+            } else if (clear(flat)) {                               // drop down
                 for (int dy = 1; dy <= MAX_DROP; dy++) {
                     BlockPos down = pos.add(dx, -dy, dz);
                     if (standable(down)) {
                         out.add(down);
+                        added = true;
                         break;
                     }
                     if (!passable(down)) {
@@ -122,8 +123,31 @@ public final class PathFinder {
                     }
                 }
             }
+            // Dig straight through at the same level (cardinal only) when there's
+            // floor to stand on and the obstruction is breakable.
+            if (!added && !diagonal && solidGround(flat.down()) && digThrough(flat)) {
+                out.add(flat);
+            }
+        }
+        // Dig one block down to descend (if there's solid floor to land on).
+        if (mineable(pos.down()) && solidGround(pos.add(0, -2, 0))) {
+            out.add(pos.down());
         }
         return out;
+    }
+
+    /** Can the player tunnel into this feet position (obstruction is breakable)? */
+    private boolean digThrough(BlockPos flat) {
+        boolean anySolid = false;
+        for (BlockPos b : new BlockPos[]{flat, flat.up()}) {
+            if (solid(b)) {
+                if (!mineable(b)) {
+                    return false;  // bedrock / unbreakable in the way
+                }
+                anySolid = true;
+            }
+        }
+        return anySolid;
     }
 
     private double cost(BlockPos from, BlockPos to) {
@@ -134,6 +158,13 @@ public final class PathFinder {
             c += 1.0;          // climbing is slower
         } else if (dy < 0) {
             c += 0.4 * -dy;    // dropping has a mild cost
+        }
+        // Any currently-solid block we must break to occupy `to`.
+        if (solid(to)) {
+            c += MINE_COST;
+        }
+        if (solid(to.up())) {
+            c += MINE_COST;
         }
         return c;
     }
@@ -209,6 +240,20 @@ public final class PathFinder {
     private boolean solidGround(BlockPos pos) {
         BlockState s = mc.world.getBlockState(pos);
         return !s.isOf(Blocks.LAVA) && !s.getCollisionShape(mc.world, pos).isEmpty();
+    }
+
+    /** A full-collision block (stone, dirt...) - air, lava, water, plants are not. */
+    private boolean solid(BlockPos pos) {
+        return !mc.world.getBlockState(pos).getCollisionShape(mc.world, pos).isEmpty();
+    }
+
+    /** A solid block we're allowed to break (excludes bedrock / unbreakable). */
+    private boolean mineable(BlockPos pos) {
+        BlockState s = mc.world.getBlockState(pos);
+        if (s.getCollisionShape(mc.world, pos).isEmpty()) {
+            return false;  // nothing solid to mine
+        }
+        return s.getHardness(mc.world, pos) >= 0.0f;
     }
 
     private static long sqDist(BlockPos a, BlockPos b) {

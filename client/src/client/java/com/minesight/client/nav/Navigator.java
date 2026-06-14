@@ -90,9 +90,14 @@ public final class Navigator {
             return;
         }
         walker.tick();
-        if (!walker.isActive() && !recompute()) {
-            msg("stuck - navigation off");
-            stop();
+        if (!walker.isActive()) {
+            if (walker.isBlocked()) {
+                msg("blocked (unbreakable or lava) - navigation off");
+                stop();
+            } else if (!recompute()) {
+                msg("stuck - navigation off");
+                stop();
+            }
         }
     }
 
