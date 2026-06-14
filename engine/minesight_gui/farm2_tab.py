@@ -94,6 +94,10 @@ class Farm2Tab(QWidget):
         self.autojoin.setChecked(self.settings.value("farm2/autojoin", True, type=bool))
         self.autojoin.setToolTip("Quick-play straight into the server on launch instead of the menu.")
         crow.addWidget(self.autojoin)
+        self.mute = QCheckBox("Mute")
+        self.mute.setChecked(self.settings.value("farm2/mute", True, type=bool))
+        self.mute.setToolTip("Set master volume to 0 in each client's options.txt before launch.")
+        crow.addWidget(self.mute)
         crow.addWidget(QLabel("Server:"))
         self.server_addr = QLineEdit(self.settings.value("farm2/serverAddr", "localhost"))
         self.server_addr.setToolTip("Address the clients auto-join (host or host:port).")
@@ -170,6 +174,7 @@ class Farm2Tab(QWidget):
             return
         self.settings.setValue("farm2/clientCount", self.client_count.value())
         self.settings.setValue("farm2/autojoin", self.autojoin.isChecked())
+        self.settings.setValue("farm2/mute", self.mute.isChecked())
         self.settings.setValue("farm2/serverAddr", self.server_addr.text().strip())
         count = self.client_count.value()
         self._launch_queue = list(range(1, count + 1))
@@ -197,6 +202,7 @@ class Farm2Tab(QWidget):
         ]
         if self.autojoin.isChecked() and self.server_addr.text().strip():
             args.append(f"-Pminesight.server={self.server_addr.text().strip()}")
+        self._prep_run_dir(CLIENT_DIR / f"run-client{idx}")
         proc = ManagedProcess(self)
         proc.line.connect(lambda ln, c=idx: self.log.append_line(f"[C{c}] {ln}"))
         proc.started.connect(self._update_running)
@@ -214,6 +220,7 @@ class Farm2Tab(QWidget):
         args = ["/c", "gradlew.bat", "runClient", "--console=plain"]
         if self.autojoin.isChecked() and self.server_addr.text().strip():
             args.append(f"-Pminesight.server={self.server_addr.text().strip()}")
+        self._prep_run_dir(CLIENT_DIR / "run")
         proc = ManagedProcess(self)
         proc.line.connect(lambda ln: self.log.append_line(f"[test] {ln}"))
         proc.started.connect(self._update_running)
@@ -241,6 +248,21 @@ class Farm2Tab(QWidget):
         self._update_running()
 
     # --- helpers --------------------------------------------------------------
+
+    def _prep_run_dir(self, run_dir: Path) -> None:
+        """Ensure the client's run dir exists and its master volume matches the
+        Mute box (written to options.txt, which Minecraft reads on startup)."""
+        run_dir.mkdir(parents=True, exist_ok=True)
+        opts = run_dir / "options.txt"
+        value = "0.0" if self.mute.isChecked() else "1.0"
+        lines = opts.read_text(encoding="utf-8", errors="replace").splitlines() if opts.exists() else []
+        for i, line in enumerate(lines):
+            if line.startswith("soundCategory_master:"):
+                lines[i] = f"soundCategory_master:{value}"
+                break
+        else:
+            lines.append(f"soundCategory_master:{value}")
+        opts.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _kill_java_under(self, predicate) -> int:
         """Kill java processes whose working dir matches predicate (gradle's

@@ -220,9 +220,9 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
             sender.sendMessage("MineSight: no ore queued yet. Run /minesightfarm scan first.");
             return true;
         }
-        Location target = new Location(player.getWorld(), ore.x() + 0.5, ore.y() + 0.5, ore.z() + 0.5);
-        Location eye = target.clone().add(3.0, 2.0, 3.0);
-        eye.setDirection(target.toVector().subtract(eye.toVector()));
+        Location center = new Location(player.getWorld(), ore.x() + 0.5, ore.y() + 0.5, ore.z() + 0.5);
+        Location eye = new Location(player.getWorld(), ore.ex(), ore.ey(), ore.ez());
+        eye.setDirection(center.toVector().subtract(eye.toVector()));
         // Teleport + gamemode must run on the player's region thread (Folia).
         player.getScheduler().run(this, task -> {
             player.setGameMode(GameMode.SPECTATOR);

@@ -32,9 +32,22 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class FoliaOreLocator {
 
-    /** A located block in world coordinates ({@code label} empty for confusers). */
-    public record OrePos(int x, int y, int z, String label) {
+    /**
+     * A located block in world coordinates ({@code label} empty for confusers),
+     * plus a precomputed camera viewpoint ({@code ex,ey,ez}) sitting in the air
+     * pocket that exposes the block - so the camera lands with a clear line of
+     * sight instead of inside rock.
+     */
+    public record OrePos(int x, int y, int z, String label, double ex, double ey, double ez) {
     }
+
+    // Face directions for the air-exposure / viewpoint search.
+    private static final int[][] DIRS = {
+            {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}
+    };
+    private static final int MAX_RUN = 5;       // how far to walk into air
+    private static final double DESIRED_DIST = 2.6;
+    private static final double MIN_DIST = 1.3;
 
     private static final int RESULT_CAP = 512;
     private static final int CONFUSER_CAP = 128;
@@ -57,6 +70,8 @@ public final class FoliaOreLocator {
     private volatile int yHi;
     private volatile int confLo = CONF_BAND_LO;
     private volatile int confHi = CONF_BAND_HI;
+    private volatile int worldMin;
+    private volatile int worldMax;
 
     private volatile List<long[]> chunkOrder = new ArrayList<>();
     private final AtomicInteger cursor = new AtomicInteger();
@@ -81,10 +96,12 @@ public final class FoliaOreLocator {
         this.world = world;
         this.wanted = Set.copyOf(wantedLabels);
         this.confuserMaterials = Set.copyOf(confuserMats);
-        this.yLo = Math.max(world.getMinHeight(), yLoIn);
-        this.yHi = Math.min(world.getMaxHeight() - 1, yHiIn);
-        this.confLo = Math.max(world.getMinHeight(), CONF_BAND_LO);
-        this.confHi = Math.min(world.getMaxHeight() - 1, CONF_BAND_HI);
+        this.worldMin = world.getMinHeight();
+        this.worldMax = world.getMaxHeight();
+        this.yLo = Math.max(worldMin, yLoIn);
+        this.yHi = Math.min(worldMax - 1, yHiIn);
+        this.confLo = Math.max(worldMin, CONF_BAND_LO);
+        this.confHi = Math.min(worldMax - 1, CONF_BAND_HI);
 
         final int ccx = centerX >> 4;
         final int ccz = centerZ >> 4;
@@ -252,22 +269,73 @@ public final class FoliaOreLocator {
                     for (int y = lo; y <= hi; y++) {
                         String label = OreCatalog.labelFor(snap.getBlockType(x, y, z));
                         if (label != null && want.contains(label)) {
-                            oreByClass.computeIfAbsent(label, k -> new ConcurrentLinkedQueue<>())
-                                    .add(new OrePos(baseX + x, y, baseZ + z, label));
-                            oreQueued.incrementAndGet();
                             oresFound.incrementAndGet();
+                            // Only queue ore with an air-exposed face we can aim at;
+                            // a fully buried block would just photograph as rock.
+                            double[] eye = viewpoint(snap, x, y, z, baseX, baseZ);
+                            if (eye != null) {
+                                oreByClass.computeIfAbsent(label, k -> new ConcurrentLinkedQueue<>())
+                                        .add(new OrePos(baseX + x, y, baseZ + z, label,
+                                                eye[0], eye[1], eye[2]));
+                                oreQueued.incrementAndGet();
+                            }
                         }
                     }
                 }
                 if (!confMats.isEmpty() && confuserQueued.get() < CONFUSER_CAP) {
                     for (int y = confLo; y <= confHi; y++) {
                         if (confMats.contains(snap.getBlockType(x, y, z))) {
-                            confusers.add(new OrePos(baseX + x, y, baseZ + z, ""));
-                            confuserQueued.incrementAndGet();
+                            double[] eye = viewpoint(snap, x, y, z, baseX, baseZ);
+                            if (eye != null) {
+                                confusers.add(new OrePos(baseX + x, y, baseZ + z, "",
+                                        eye[0], eye[1], eye[2]));
+                                confuserQueued.incrementAndGet();
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Find a camera position with line of sight to the block at local (lx,ly,lz):
+     * the air-exposed face with the most open space, stepped out into that air.
+     * Returns world {@code {ex,ey,ez}}, or {@code null} if no in-snapshot air face
+     * (the block is buried and can't be cleanly photographed).
+     */
+    private double[] viewpoint(ChunkSnapshot snap, int lx, int ly, int lz, int baseX, int baseZ) {
+        int bestDir = -1;
+        int bestRun = 0;
+        for (int di = 0; di < DIRS.length; di++) {
+            int[] d = DIRS[di];
+            int run = 0;
+            for (int step = 1; step <= MAX_RUN; step++) {
+                int nx = lx + d[0] * step;
+                int ny = ly + d[1] * step;
+                int nz = lz + d[2] * step;
+                if (nx < 0 || nx > 15 || nz < 0 || nz > 15
+                        || ny < worldMin || ny >= worldMax) {
+                    break;  // out of the snapshot/world - can't confirm air
+                }
+                if (!snap.getBlockType(nx, ny, nz).isAir()) {
+                    break;
+                }
+                run++;
+            }
+            if (run > bestRun) {
+                bestRun = run;
+                bestDir = di;
+            }
+        }
+        if (bestDir < 0) {
+            return null;
+        }
+        int[] d = DIRS[bestDir];
+        double dist = Math.max(MIN_DIST, Math.min(DESIRED_DIST, bestRun - 0.2));
+        double cx = baseX + lx + 0.5;
+        double cy = ly + 0.5;
+        double cz = baseZ + lz + 0.5;
+        return new double[]{cx + d[0] * dist, cy + d[1] * dist, cz + d[2] * dist};
     }
 }

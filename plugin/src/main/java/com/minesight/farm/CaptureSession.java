@@ -279,9 +279,11 @@ public final class CaptureSession {
 
     private void teleport(Player player, FoliaOreLocator.OrePos t) {
         player.getScheduler().run(plugin, task -> {
-            Location target = new Location(player.getWorld(), t.x() + 0.5, t.y() + 0.5, t.z() + 0.5);
-            Location eye = target.clone().add(3.0, 2.0, 3.0);
-            eye.setDirection(target.toVector().subtract(eye.toVector()));
+            // Camera sits in the precomputed air pocket, looking at the block.
+            Location eye = new Location(player.getWorld(), t.ex(), t.ey(), t.ez());
+            Location center = new Location(player.getWorld(),
+                    t.x() + 0.5, t.y() + 0.5, t.z() + 0.5);
+            eye.setDirection(center.toVector().subtract(eye.toVector()));
             player.setGameMode(GameMode.SPECTATOR);
             player.teleportAsync(eye);
         }, null);
