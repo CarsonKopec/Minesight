@@ -14,7 +14,13 @@ base { archivesName.set(project.property("archives_base_name") as String) }
 }
 
 java {
-    toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+        // Run/build on HotSpot (Temurin), not GraalVM: GraalVM's JVMCI compiler
+        // crashes LWJGL/GLFW when running Minecraft (EXCEPTION_ACCESS_VIOLATION
+        // in glfw.dll). Gradle auto-provisions it via the foojay resolver.
+        vendor.set(JvmVendorSpec.ADOPTIUM)
+    }
     withSourcesJar()
 }
 

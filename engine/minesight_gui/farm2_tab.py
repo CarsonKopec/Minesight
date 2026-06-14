@@ -20,9 +20,11 @@ from .constants import CLIENT_DIR, PLUGIN_DIR
 from .procs import ManagedProcess
 from .widgets import LogView
 
-# Clients launched a few seconds apart so the first runClient finishes building
-# (remapJar) before the next starts; later ones see it up-to-date.
-LAUNCH_STAGGER_MS = 15000
+# Clients launched well apart: each runClient holds the shared fabric-loom cache
+# lock while it builds, and Minecraft's GLFW init is fragile when several windows
+# come up at once - so give each one room to finish building + open before the
+# next starts.
+LAUNCH_STAGGER_MS = 30000
 
 log = logging.getLogger("minesight.gui.farm2")
 
