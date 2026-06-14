@@ -14,6 +14,7 @@ from PySide6.QtWebSockets import QWebSocketServer
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
+    QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -120,22 +121,28 @@ class CollectorTab(QWidget):
         status_row.addWidget(self.lan_check)
         layout.addLayout(status_row)
 
-        form_box = QGroupBox("Session settings")
-        grid = QGridLayout(form_box)
-        grid.addWidget(QLabel("Dataset name:"), 0, 0)
+        # Settings grouped into labeled cards, two per row.
+        cards = QGridLayout()
+        cards.setHorizontalSpacing(12)
+        cards.setVerticalSpacing(12)
+        cards.setColumnStretch(0, 1)
+        cards.setColumnStretch(1, 1)
+
+        # --- Dataset ----------------------------------------------------------
+        ds_box, ds = self._card("Dataset")
         self.name = QLineEdit(time.strftime("collected-%Y%m%d-%H%M"))
         self.name.setToolTip("Images land in engine/datasets/<name>/pool until you finalize")
-        grid.addWidget(self.name, 0, 1)
-        grid.addWidget(QLabel("Images to collect:"), 0, 2)
+        ds.addRow("Name", self.name)
         self.target = QSpinBox(minimum=10, maximum=10000, value=300)
         self.target.setToolTip("Total across all connected clients - the work is split evenly")
-        grid.addWidget(self.target, 0, 3)
-        grid.addWidget(QLabel("Search radius (blocks):"), 0, 4)
+        ds.addRow("Images to collect", self._field(self.target))
+        cards.addWidget(ds_box, 0, 0)
+
+        # --- Search area ------------------------------------------------------
+        sa_box, sa = self._card("Search area")
         self.radius = QSpinBox(minimum=50, maximum=5000, value=300, singleStep=50)
         self.radius.setToolTip("How far from the start point teleports may roam.\nThe search center also auto-moves when an area runs dry.")
-        grid.addWidget(self.radius, 0, 5)
-
-        grid.addWidget(QLabel("Depth range (Y):"), 1, 0)
+        sa.addRow("Radius (blocks)", self._field(self.radius))
         self.y_min = QSpinBox(minimum=-64, maximum=320, value=5)
         self.y_max = QSpinBox(minimum=-64, maximum=320, value=62)
         ytip = (
@@ -147,35 +154,49 @@ class CollectorTab(QWidget):
         )
         self.y_min.setToolTip(ytip)
         self.y_max.setToolTip(ytip)
-        yrow = QHBoxLayout()
-        yrow.addWidget(self.y_min)
-        yrow.addWidget(QLabel("to"))
-        yrow.addWidget(self.y_max)
-        grid.addLayout(yrow, 1, 1)
-        grid.addWidget(QLabel("Brightness (gamma):"), 1, 2)
+        sa.addRow("Depth (Y)", self._range(self.y_min, self.y_max))
+        self.skip_visited = QCheckBox("Skip visited ores")
+        self.skip_visited.setChecked(True)
+        self.skip_visited.setToolTip(
+            "Remember every captured ore per world (survives restarts) and never\n"
+            "photograph the same vein twice - avoids near-duplicate images."
+        )
+        self.smart_targeting = QCheckBox("Smart targeting")
+        self.smart_targeting.setChecked(True)
+        self.smart_targeting.setToolTip(
+            "Scan the world on the (integrated) server to teleport straight to\n"
+            "confirmed, cave-exposed ore instead of guessing - far fewer wasted\n"
+            "hops, especially for rare deep ores. Singleplayer/farm worlds only."
+        )
+        sa.addRow("", self.skip_visited)
+        sa.addRow("", self.smart_targeting)
+        cards.addWidget(sa_box, 0, 1)
+
+        # --- Camera -----------------------------------------------------------
+        cam_box, cam = self._card("Camera")
         self.gamma_min = QDoubleSpinBox(minimum=0.0, maximum=10.0, value=0.0, singleStep=0.1)
         self.gamma_max = QDoubleSpinBox(minimum=0.0, maximum=10.0, value=1.5, singleStep=0.1)
         gtip = "Each shot uses a random brightness in this range -\nvaried cave lighting makes the model robust."
         self.gamma_min.setToolTip(gtip)
         self.gamma_max.setToolTip(gtip)
-        grow = QHBoxLayout()
-        grow.addWidget(self.gamma_min)
-        grow.addWidget(QLabel("to"))
-        grow.addWidget(self.gamma_max)
-        grid.addLayout(grow, 1, 3)
-        grid.addWidget(QLabel("Field of view:"), 1, 4)
+        cam.addRow("Brightness (gamma)", self._range(self.gamma_min, self.gamma_max))
         self.fov_min = QSpinBox(minimum=30, maximum=110, value=70)
         self.fov_max = QSpinBox(minimum=30, maximum=110, value=110)
         ftip = "Each shot uses a random FOV in this range,\nmatching however you actually play."
         self.fov_min.setToolTip(ftip)
         self.fov_max.setToolTip(ftip)
-        frow = QHBoxLayout()
-        frow.addWidget(self.fov_min)
-        frow.addWidget(QLabel("to"))
-        frow.addWidget(self.fov_max)
-        grid.addLayout(frow, 1, 5)
+        cam.addRow("Field of view", self._range(self.fov_min, self.fov_max))
+        self.settle = QSpinBox(minimum=10, maximum=200, value=40)
+        self.settle.setToolTip(
+            "Wait after each teleport so chunks actually render before capturing.\n"
+            "Raise this if you still see void/black frames; the mod also auto-retries\n"
+            "frames that come back black or featureless."
+        )
+        cam.addRow("Render wait (ticks)", self._field(self.settle))
+        cards.addWidget(cam_box, 1, 0)
 
-        grid.addWidget(QLabel("Background frames:"), 2, 0)
+        # --- Negatives --------------------------------------------------------
+        neg_box, neg = self._card("Negatives")
         self.negatives = QDoubleSpinBox(minimum=0.0, maximum=0.5, value=0.0, singleStep=0.02)
         self.negatives.setToolTip(
             "0 = only save frames that contain ore boxes (default).\n"
@@ -183,16 +204,7 @@ class CollectorTab(QWidget):
             "which can reduce false positives - but the Roboflow data already\n"
             "includes ~550 background images, so it's rarely needed."
         )
-        grid.addWidget(self.negatives, 2, 1)
-        grid.addWidget(QLabel("Render wait (ticks):"), 2, 2)
-        self.settle = QSpinBox(minimum=10, maximum=200, value=40)
-        self.settle.setToolTip(
-            "Wait after each teleport so chunks actually render before capturing.\n"
-            "Raise this if you still see void/black frames; the mod also auto-retries\n"
-            "frames that come back black or featureless."
-        )
-        grid.addWidget(self.settle, 2, 3)
-        grid.addWidget(QLabel("Hard negatives:"), 2, 4)
+        neg.addRow("Background frames", self._field(self.negatives))
         self.hard_negatives = QDoubleSpinBox(minimum=0.0, maximum=0.6, value=0.0, singleStep=0.05)
         self.hard_negatives.setToolTip(
             "Fraction of attempts that surface and photograph CONFUSER blocks -\n"
@@ -200,32 +212,33 @@ class CollectorTab(QWidget):
             "cacti - saved with empty labels so the model learns these are NOT ore.\n"
             "The direct fix for 'red flowers detected as redstone'. Try 0.2-0.3."
         )
-        grid.addWidget(self.hard_negatives, 2, 5)
-
-        conf_label = QLabel("Confuser types:")
-        conf_label.setToolTip(
-            "Which look-alike blocks the hard-negative shots may target, so it's\n"
-            "not always flowers. Uncheck a type to stop collecting it."
-        )
-        grid.addWidget(conf_label, 4, 0)
-        conf_row = QHBoxLayout()
+        neg.addRow("Hard negatives", self._field(self.hard_negatives))
+        conf_row = QWidget()
+        conf_h = QHBoxLayout(conf_row)
+        conf_h.setContentsMargins(0, 0, 0, 0)
+        conf_h.setSpacing(8)
         self.confuser_checks: dict[str, QCheckBox] = {}
         for cat, text, default in CONFUSER_TYPES:
             cb = QCheckBox(text)
             cb.setChecked(default)
+            cb.setToolTip("A confuser category the hard-negative shots may target.")
             self.confuser_checks[cat] = cb
-            conf_row.addWidget(cb)
-        conf_row.addStretch(1)
-        grid.addLayout(conf_row, 4, 1, 1, 5)
+            conf_h.addWidget(cb)
+        conf_h.addStretch(1)
+        neg.addRow("Confusers", conf_row)
+        cards.addWidget(neg_box, 1, 1)
 
-        classes_label = QLabel("Classes (+ box goals):")
-        classes_label.setToolTip(
+        layout.addLayout(cards)
+
+        # --- Classes & goals (full width) ------------------------------------
+        cls_box = QGroupBox("Classes & box goals")
+        cls_box.setToolTip(
             "Tick the ores to photograph. The number next to each is an optional\n"
             "GOAL in boxes (0 = none): if any goal is set, the session keeps going\n"
-            "until every goal is met (or the image cap above is reached), and the\n"
+            "until every goal is met (or the image cap is reached), and the\n"
             "collector actively hunts whichever class is furthest behind."
         )
-        grid.addWidget(classes_label, 3, 0)
+        cls_v = QVBoxLayout(cls_box)
         classes_row = QHBoxLayout()
         self.class_checks: list[QCheckBox] = []
         self.class_goals: dict[str, QSpinBox] = {}
@@ -242,9 +255,18 @@ class CollectorTab(QWidget):
             classes_row.addWidget(goal)
             classes_row.addSpacing(8)
         classes_row.addStretch(1)
-        grid.addLayout(classes_row, 3, 1, 1, 5)
-        layout.addWidget(form_box)
+        goals_btn = QPushButton("🎯 Goals from dataset…")
+        goals_btn.setToolTip(
+            "Analyze an existing dataset and auto-fill the class goals with what\n"
+            "it's missing - 'bring every class up to N boxes'. Collect, then merge\n"
+            "back into that dataset and retrain."
+        )
+        goals_btn.clicked.connect(self._goals_from_dataset)
+        classes_row.addWidget(goals_btn)
+        cls_v.addLayout(classes_row)
+        layout.addWidget(cls_box)
 
+        # --- Controls ---------------------------------------------------------
         controls = QHBoxLayout()
         self.start_btn = QPushButton("▶ Start collecting")
         self.start_btn.clicked.connect(self.start_collection)
@@ -253,37 +275,6 @@ class CollectorTab(QWidget):
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop_collection)
         controls.addWidget(self.stop_btn)
-        self.skip_visited = QCheckBox("Skip visited ores")
-        self.skip_visited.setChecked(True)
-        self.skip_visited.setToolTip(
-            "Remember every captured ore per world (survives restarts) and never\n"
-            "photograph the same vein twice - avoids near-duplicate images."
-        )
-        controls.addWidget(self.skip_visited)
-        self.smart_targeting = QCheckBox("Smart targeting")
-        self.smart_targeting.setChecked(True)
-        self.smart_targeting.setToolTip(
-            "Scan the world on the (integrated) server to teleport straight to\n"
-            "confirmed, cave-exposed ore instead of guessing - far fewer wasted\n"
-            "hops, especially for rare deep ores. Singleplayer/farm worlds only."
-        )
-        controls.addWidget(self.smart_targeting)
-        clear_hist = QPushButton("Clear world history")
-        clear_hist.setToolTip("Forget which ores were captured (sent to every connected client)")
-        clear_hist.clicked.connect(self._clear_history)
-        controls.addWidget(clear_hist)
-        goals_btn = QPushButton("🎯 Goals from dataset…")
-        goals_btn.setToolTip(
-            "Analyze an existing dataset and auto-fill the class goals with what\n"
-            "it's missing - 'bring every class up to N boxes'. Collect, then merge\n"
-            "back into that dataset and retrain."
-        )
-        goals_btn.clicked.connect(self._goals_from_dataset)
-        controls.addWidget(goals_btn)
-        save_btn = QPushButton("💾 Save settings")
-        save_btn.setToolTip("Remember every value on this tab for future sessions")
-        save_btn.clicked.connect(self._save_settings)
-        controls.addWidget(save_btn)
         self.apply_btn = QPushButton("⚡ Apply live")
         self.apply_btn.setToolTip(
             "Push the current settings into the RUNNING session - takes effect\n"
@@ -292,6 +283,14 @@ class CollectorTab(QWidget):
         self.apply_btn.setEnabled(False)
         self.apply_btn.clicked.connect(self._apply_live)
         controls.addWidget(self.apply_btn)
+        save_btn = QPushButton("💾 Save settings")
+        save_btn.setToolTip("Remember every value on this tab for future sessions")
+        save_btn.clicked.connect(self._save_settings)
+        controls.addWidget(save_btn)
+        clear_hist = QPushButton("Clear world history")
+        clear_hist.setToolTip("Forget which ores were captured (sent to every connected client)")
+        clear_hist.clicked.connect(self._clear_history)
+        controls.addWidget(clear_hist)
         controls.addStretch(1)
         self.finalize_btn = QPushButton("📦 Finalize dataset…")
         self.finalize_btn.setToolTip("Split a collected pool 80/10/10, write data.yaml, optionally merge into another dataset")
@@ -319,6 +318,42 @@ class CollectorTab(QWidget):
             QSettings("MineSight", "ControlPanel").value("collector/lan", False, type=bool)
         )
         self._relisten()
+
+    # --- layout helpers --------------------------------------------------------
+
+    @staticmethod
+    def _card(title: str):
+        """A titled card with a right-aligned form layout for label:field rows."""
+        box = QGroupBox(title)
+        form = QFormLayout(box)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(8)
+        return box, form
+
+    @staticmethod
+    def _field(widget) -> QWidget:
+        """Wrap a control so it keeps its natural width, left-aligned in the form."""
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(widget)
+        h.addStretch(1)
+        return w
+
+    @staticmethod
+    def _range(lo, hi) -> QWidget:
+        """A compact 'lo – hi' min/max pair."""
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+        h.addWidget(lo)
+        h.addWidget(QLabel("–"))
+        h.addWidget(hi)
+        h.addStretch(1)
+        return w
 
     # --- settings persistence --------------------------------------------------
 
