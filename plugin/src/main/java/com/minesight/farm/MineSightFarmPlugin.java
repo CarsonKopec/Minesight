@@ -48,6 +48,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
     private volatile CaptureSession session;
     private VisitedStore visited;
     private GuiLink guiLink;
+    private int heartbeat;
 
     @Override
     public void onEnable() {
@@ -78,6 +79,13 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
                 if (s.isDone()) {
                     session = null;
                 }
+            }
+            // Periodic live status (every ~5s) while scanning or capturing.
+            if (++heartbeat % 100 == 0 && (locator.isRunning() || s != null)) {
+                getLogger().info(String.format(
+                        "status: %d ore + %d confusers queued, %d found in %d chunks%s",
+                        locator.available(), locator.availableConfusers(), locator.oresFound(),
+                        locator.chunksScanned(), s != null ? " | " + s.status() : ""));
             }
         }, 1L, 1L);
 

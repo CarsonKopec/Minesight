@@ -44,6 +44,7 @@ public final class EngineClient {
     private volatile WebSocket ws;
     private volatile boolean connecting;
     private volatile long lastAttempt;
+    private volatile boolean loggedFirstFrame;
 
     public EngineClient(DetectionStore store) {
         this.store = store;
@@ -125,7 +126,15 @@ public final class EngineClient {
             JsonObject obj = JsonParser.parseString(message).getAsJsonObject();
             String type = obj.has("type") ? obj.get("type").getAsString() : "";
             if ("detections".equals(type)) {
-                store.update(gson.fromJson(obj, DetectionFrame.class));
+                DetectionFrame frame = gson.fromJson(obj, DetectionFrame.class);
+                store.update(frame);
+                if (!loggedFirstFrame && frame.objects != null) {
+                    loggedFirstFrame = true;
+                    LOG.info("engine: receiving detections ({} object(s) this frame)",
+                            frame.objects.size());
+                }
+                LOG.debug("detections: {} object(s)",
+                        frame.objects == null ? 0 : frame.objects.size());
             }
         } catch (Exception ignored) {
             // Malformed message; drop it.

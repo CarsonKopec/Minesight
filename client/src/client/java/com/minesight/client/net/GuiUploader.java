@@ -47,6 +47,7 @@ public final class GuiUploader {
     private volatile WebSocket ws;
     private volatile boolean connecting;
     private volatile long lastAttempt;
+    private volatile boolean loggedUpload;
 
     /** @param onSettings called (off the client thread) with each collect_start /
      *                    collect_update; may be null if settings aren't consumed. */
@@ -89,6 +90,11 @@ public final class GuiUploader {
         if (ws == null) {
             return;
         }
+        if (!loggedUpload) {
+            loggedUpload = true;
+            LOG.info("GUI upload: streaming captured frames to {}", url);
+        }
+        LOG.debug("GUI upload: {} ({} box(es), {} KB)", file, boxes, png.length / 1024);
         String b64 = Base64.getEncoder().encodeToString(png);
         String image = "{\"type\":\"collect_image\",\"file\":" + js(file)
                 + ",\"png\":\"" + b64 + "\",\"labels\":" + js(labels) + "}";

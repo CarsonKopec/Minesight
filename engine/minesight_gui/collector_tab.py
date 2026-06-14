@@ -487,6 +487,7 @@ class CollectorTab(QWidget):
         sock.disconnected.connect(lambda s=sock: self._on_disconnect(s))
         origin = f" from {sock.peerAddress().toString()}" if remote else ""
         self.log.append_line(f"[client #{info['id']} connected{origin}]")
+        log.info("collector client #%d connected%s", info["id"], origin)
         self._update_conn_status()
 
     def _on_disconnect(self, sock) -> None:
@@ -663,10 +664,12 @@ class CollectorTab(QWidget):
             return
         cid = info["id"]
         msg_type = data.get("type")
+        log.debug("collector <- %s from client #%s", msg_type, cid)
         if msg_type == "collector_hello":
             info["role"] = data.get("role", "legacy")
             who = data.get("client", info["role"])
             self.log.append_line(f"[#{cid} ready in-game — role: {info['role']} ({who})]")
+            log.info("collector client #%d hello: role=%s (%s)", cid, info["role"], who)
             self._update_conn_status()
         elif msg_type == "collect_progress":
             info["saved"] = data.get("saved", info["saved"])
@@ -692,6 +695,7 @@ class CollectorTab(QWidget):
                 (pool / "labels" / (Path(fname).stem + ".txt")).write_text(
                     data.get("labels", ""), encoding="utf-8"
                 )
+                log.debug("collector stored %s -> %s", fname, session)
                 if not self._session_name:
                     self.log.append_line(f"[#{cid} streamed {fname} -> {session}]")
             except Exception as e:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, QTimer
@@ -22,6 +23,8 @@ from .widgets import LogView
 # Clients launched a few seconds apart so the first runClient finishes building
 # (remapJar) before the next starts; later ones see it up-to-date.
 LAUNCH_STAGGER_MS = 15000
+
+log = logging.getLogger("minesight.gui.farm2")
 
 
 class Farm2Tab(QWidget):
@@ -121,6 +124,7 @@ class Farm2Tab(QWidget):
     def _build(self) -> None:
         if self.build_proc.running:
             return
+        log.info("farm2: building plugin + client")
         self.log.append_line("$ gradlew build (plugin, then client)")
         # plugin/ and client/ are independent gradle projects; build both.
         cmd = ("gradlew.bat build --console=plain && "
@@ -136,6 +140,7 @@ class Farm2Tab(QWidget):
     def start_server(self) -> None:
         if self.server_proc.running:
             return
+        log.info("farm2: starting Folia/Paper server (runServer)")
         self.log.append_line("$ gradlew runServer (plugin)")
         self.server_proc.start(
             "cmd.exe", ["/c", "gradlew.bat", "runServer", "--console=plain"], str(PLUGIN_DIR)
@@ -148,6 +153,7 @@ class Farm2Tab(QWidget):
         killed = self._kill_java_under(
             lambda cwd: cwd.parent == PLUGIN_DIR and cwd.name == "run"
         )
+        log.info("farm2: server stopped (%d JVM(s) terminated)", killed)
         self.log.append_line(f"[server stopped - {killed} JVM(s) terminated]")
         self._update_state()
 
@@ -165,6 +171,8 @@ class Farm2Tab(QWidget):
         self.settings.setValue("farm2/serverAddr", self.server_addr.text().strip())
         count = self.client_count.value()
         self._launch_queue = list(range(1, count + 1))
+        log.info("farm2: launching %d client(s), auto-join=%s server=%s",
+                 count, self.autojoin.isChecked(), self.server_addr.text().strip())
         self.log.append_line(
             f"[launching {count} client(s), {LAUNCH_STAGGER_MS // 1000}s apart]"
         )
@@ -210,6 +218,7 @@ class Farm2Tab(QWidget):
         proc.finished.connect(lambda code: self._on_client_exit("test", code))
         proc.start("cmd.exe", args, str(CLIENT_DIR))
         self._client_procs.append((0, proc))
+        log.info("farm2: launching test client (auto-join=%s)", self.autojoin.isChecked())
         self.log.append_line("[test client starting → client/run]")
         self._update_running()
 
@@ -225,6 +234,7 @@ class Farm2Tab(QWidget):
         killed = self._kill_java_under(
             lambda cwd: cwd.parent == CLIENT_DIR and cwd.name.startswith("run")
         )
+        log.info("farm2: clients stopped (%d game process(es) terminated)", killed)
         self.log.append_line(f"[clients stopped - {killed} game process(es) terminated]")
         self._update_running()
 

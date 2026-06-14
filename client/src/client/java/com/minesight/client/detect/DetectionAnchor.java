@@ -31,10 +31,13 @@ public final class DetectionAnchor {
     private static final float NEAR_PLANE = 0.05f;
     private static final float FAR_PLANE = 1000.0f;
 
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger("minesight");
+
     private final MinecraftClient mc;
     private final DetectionStore store;
     private final OreMemory memory;
     private long lastProcessed;
+    private int lastLoggedSize;
 
     public DetectionAnchor(MinecraftClient mc, DetectionStore store, OreMemory memory) {
         this.mc = mc;
@@ -102,9 +105,17 @@ public final class DetectionAnchor {
             String actual = OreBlocks.labelFor(mc.world.getBlockState(bp).getBlock());
             if (actual != null) {
                 memory.record(bp, actual, d.confidence);
+                LOG.debug("anchored {} (detected {}) @ {}", actual, d.label, bp);
+            } else {
+                LOG.debug("rejected anchor for {} - hit block is not ore @ {}", d.label, bp);
             }
         }
         memory.saveIfDirty();
+        int size = memory.size();
+        if (size >= lastLoggedSize + 10) {
+            lastLoggedSize = size;
+            LOG.info("ore memory: {} blocks remembered", size);
+        }
     }
 
     private static Vec3d unproject(Matrix4f inv, Vec3d camPos, float ndcX, float ndcY, float ndcZ) {

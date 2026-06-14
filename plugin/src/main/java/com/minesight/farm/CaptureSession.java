@@ -143,9 +143,18 @@ public final class CaptureSession {
 
     private void refreshCameras() {
         for (Player p : plugin.getServer().getOnlinePlayers()) {
-            cams.computeIfAbsent(p.getUniqueId(), Cam::new);
+            if (cams.putIfAbsent(p.getUniqueId(), new Cam(p.getUniqueId())) == null) {
+                plugin.getLogger().info("Capture camera added: " + p.getName()
+                        + " (" + cams.size() + " active)");
+            }
         }
-        cams.keySet().removeIf(id -> plugin.getServer().getPlayer(id) == null);
+        cams.keySet().removeIf(id -> {
+            if (plugin.getServer().getPlayer(id) == null) {
+                plugin.getLogger().info("Capture camera removed (" + (cams.size() - 1) + " active)");
+                return true;
+            }
+            return false;
+        });
     }
 
     private void advance(Cam cam) {
@@ -220,6 +229,9 @@ public final class CaptureSession {
         teleport(player, target);
         cam.state = State.TP_WAIT;
         cam.stateTicks = 0;
+        plugin.getLogger().fine("shot " + cam.currentShot + " -> " + player.getName() + " @ "
+                + target.x() + "," + target.y() + "," + target.z()
+                + (hardNeg ? " (hard negative)" : " " + target.label()));
     }
 
     /** Pick ore, preferring the class furthest behind its goal. */
