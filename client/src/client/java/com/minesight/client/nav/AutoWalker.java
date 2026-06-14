@@ -4,6 +4,10 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.item.BlockItem;
+import net.minecraft.item.ItemStack;
+import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
@@ -99,8 +103,23 @@ public final class AutoWalker {
             return;
         }
 
+        // Bridge: the next cell has no floor - place a block under it and cross.
+        if (wp.getY() == player.getBlockPos().getY() && !solid(wp.down())) {
+            mc.options.sneakKey.setPressed(true);
+            mc.options.attackKey.setPressed(false);
+            if (!placeBridge(player, wp)) {
+                blocked = true;
+                stop();
+            }
+            return;
+        }
+
         // Walk toward the waypoint.
         release();
+        // Keep sneaking while a bridge is imminent so we don't overshoot the edge.
+        boolean nearLedge = !solid(wp.down())
+                || (index + 1 < path.size() && !solid(path.get(index + 1).down()));
+        mc.options.sneakKey.setPressed(nearLedge);
         double dx = wp.getX() + 0.5 - px;
         double dz = wp.getZ() + 0.5 - pz;
         player.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
@@ -149,6 +168,53 @@ public final class AutoWalker {
         mc.options.jumpKey.setPressed(false);
         mc.options.attackKey.setPressed(true);
         stuckTicks = 0;  // breaking is slow; don't trip the stuck check
+    }
+
+    /** Sneak-bridge: place a building block under the floorless waypoint. */
+    private boolean placeBridge(ClientPlayerEntity player, BlockPos wp) {
+        BlockPos prev = index > 0 ? path.get(index - 1) : player.getBlockPos();
+        int ddx = wp.getX() - prev.getX();
+        int ddz = wp.getZ() - prev.getZ();
+        Direction dir = ddx > 0 ? Direction.EAST : ddx < 0 ? Direction.WEST
+                : ddz > 0 ? Direction.SOUTH : ddz < 0 ? Direction.NORTH : null;
+        if (dir == null) {
+            return false;
+        }
+        BlockPos support = wp.down().offset(dir.getOpposite());  // floor behind the gap
+        if (!solid(support)) {
+            return false;
+        }
+        int slot = buildingSlot(player);
+        if (slot < 0) {
+            return false;  // nothing to bridge with
+        }
+        if (player.getInventory().getSelectedSlot() != slot) {
+            player.getInventory().setSelectedSlot(slot);
+        }
+        double hx = support.getX() + 0.5 + dir.getOffsetX() * 0.5;
+        double hy = support.getY() + 0.5 + dir.getOffsetY() * 0.5;
+        double hz = support.getZ() + 0.5 + dir.getOffsetZ() * 0.5;
+        Vec3d eye = player.getEyePos();
+        double ex = hx - eye.x;
+        double ey = hy - eye.y;
+        double ez = hz - eye.z;
+        player.setYaw((float) Math.toDegrees(Math.atan2(-ex, ez)));
+        player.setPitch((float) -Math.toDegrees(Math.atan2(ey, Math.sqrt(ex * ex + ez * ez))));
+        mc.options.forwardKey.setPressed(false);
+        BlockHitResult hit = new BlockHitResult(new Vec3d(hx, hy, hz), dir, support, false);
+        mc.interactionManager.interactBlock(player, Hand.MAIN_HAND, hit);
+        player.swingHand(Hand.MAIN_HAND);
+        return true;
+    }
+
+    private int buildingSlot(ClientPlayerEntity player) {
+        for (int i = 0; i < 9; i++) {
+            ItemStack s = player.getInventory().getStack(i);
+            if (!s.isEmpty() && s.getItem() instanceof BlockItem) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private BlockPos obstruction(BlockPos wp) {
@@ -206,5 +272,6 @@ public final class AutoWalker {
         mc.options.jumpKey.setPressed(false);
         mc.options.sprintKey.setPressed(false);
         mc.options.attackKey.setPressed(false);
+        mc.options.sneakKey.setPressed(false);
     }
 }

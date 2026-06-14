@@ -34,6 +34,7 @@ public final class Navigator {
     private boolean active;
     private BlockPos target;
     private int repath;
+    private float lastHealth = -1.0f;
 
     public Navigator(MinecraftClient mc, OreMemory memory) {
         this.mc = mc;
@@ -79,6 +80,15 @@ public final class Navigator {
             stop();
             return;
         }
+        // Bail if we're taking damage (drowning, mob, fall, fire) - safety first.
+        float hp = mc.player.getHealth();
+        if (lastHealth >= 0.0f && hp < lastHealth - 0.5f) {
+            lastHealth = hp;
+            msg("took damage - navigation off");
+            stop();
+            return;
+        }
+        lastHealth = hp;
         if (sqDist(mc.player.getBlockPos(), target) <= ARRIVE_SQ) {
             msg("arrived at " + label(target));
             stop();
@@ -114,6 +124,7 @@ public final class Navigator {
 
     private void stop() {
         active = false;
+        lastHealth = -1.0f;
         walker.stop();
         renderer.setPath(null, null);
     }

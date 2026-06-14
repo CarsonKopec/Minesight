@@ -3,7 +3,10 @@ package com.minesight.client.nav;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.item.BlockItem;
+import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.world.World;
 
 import java.util.ArrayList;
@@ -30,6 +33,10 @@ public final class PathFinder {
     private static final int MAX_RANGE = 96;
     /** Cost of mining one block, in walk-steps - high enough to prefer walking. */
     private static final double MINE_COST = 5.0;
+    /** Cost of placing a block to bridge a gap. */
+    private static final double PLACE_COST = 6.0;
+    /** Penalty for standing next to lava - routes away from the edges. */
+    private static final double LAVA_NEAR_COST = 8.0;
 
     private final MinecraftClient mc;
 
@@ -127,6 +134,13 @@ public final class PathFinder {
             // floor to stand on and the obstruction is breakable.
             if (!added && !diagonal && solidGround(flat.down()) && digThrough(flat)) {
                 out.add(flat);
+                added = true;
+            }
+            // Bridge across a gap (cardinal): step onto a floorless cell by placing
+            // a block under it - the way over lava/voids. Needs blocks + a support.
+            if (!added && !diagonal && clear(flat) && !hazard(flat)
+                    && !solidGround(flat.down()) && solid(pos.down()) && hasBuildingBlocks()) {
+                out.add(flat);
             }
         }
         // Dig one block down to descend (if there's solid floor to land on).
@@ -165,6 +179,13 @@ public final class PathFinder {
         }
         if (solid(to.up())) {
             c += MINE_COST;
+        }
+        // Same-level move onto a floorless cell = a bridge (place a block).
+        if (dy == 0 && !solid(to.down())) {
+            c += PLACE_COST;
+        }
+        if (lavaAdjacent(to)) {
+            c += LAVA_NEAR_COST;
         }
         return c;
     }
@@ -222,9 +243,45 @@ public final class PathFinder {
         return null;
     }
 
-    /** Feet position: room for the player and solid ground beneath. */
+    /** Feet position: room for the player, solid ground, and not a hazard. */
     private boolean standable(BlockPos feet) {
-        return clear(feet) && solidGround(feet.down());
+        return clear(feet) && solidGround(feet.down()) && !hazard(feet);
+    }
+
+    /** Standing here hurts: fire/lava/cactus/berries/powder snow at body level,
+     *  or magma underfoot. */
+    private boolean hazard(BlockPos feet) {
+        return hazardBlock(feet) || hazardBlock(feet.up())
+                || mc.world.getBlockState(feet.down()).isOf(Blocks.MAGMA_BLOCK);
+    }
+
+    private boolean hazardBlock(BlockPos p) {
+        BlockState s = mc.world.getBlockState(p);
+        return s.isOf(Blocks.LAVA) || s.isOf(Blocks.FIRE) || s.isOf(Blocks.SOUL_FIRE)
+                || s.isOf(Blocks.CACTUS) || s.isOf(Blocks.SWEET_BERRY_BUSH)
+                || s.isOf(Blocks.POWDER_SNOW) || s.isOf(Blocks.WITHER_ROSE);
+    }
+
+    private boolean lavaAdjacent(BlockPos pos) {
+        for (Direction d : Direction.values()) {
+            if (mc.world.getBlockState(pos.offset(d)).isOf(Blocks.LAVA)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasBuildingBlocks() {
+        if (mc.player == null) {
+            return false;
+        }
+        for (int i = 0; i < 9; i++) {
+            ItemStack s = mc.player.getInventory().getStack(i);
+            if (!s.isEmpty() && s.getItem() instanceof BlockItem) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Room for a player's body (feet + head passable). */
@@ -247,13 +304,14 @@ public final class PathFinder {
         return !mc.world.getBlockState(pos).getCollisionShape(mc.world, pos).isEmpty();
     }
 
-    /** A solid block we're allowed to break (excludes bedrock / unbreakable). */
+    /** A solid block we're allowed to break: not unbreakable, not touching lava
+     *  (so a tunnel never breaks straight into a lava flow). */
     private boolean mineable(BlockPos pos) {
         BlockState s = mc.world.getBlockState(pos);
         if (s.getCollisionShape(mc.world, pos).isEmpty()) {
             return false;  // nothing solid to mine
         }
-        return s.getHardness(mc.world, pos) >= 0.0f;
+        return s.getHardness(mc.world, pos) >= 0.0f && !lavaAdjacent(pos);
     }
 
     private static long sqDist(BlockPos a, BlockPos b) {
