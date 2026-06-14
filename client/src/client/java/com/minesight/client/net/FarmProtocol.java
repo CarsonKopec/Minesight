@@ -26,8 +26,12 @@ public final class FarmProtocol {
                          int maxX, int maxY, int maxZ) {
     }
 
-    /** plugin -> client: "stand where you are and photograph these ores". */
-    public record CaptureRequest(int shotId, boolean hideHud, List<OreBox> boxes) {
+    /**
+     * plugin -> client: "stand where you are and photograph these ores".
+     * {@code saveEmpty} = a hard-negative shot: save the frame even with no ore
+     * boxes (empty label), so the model learns those look-alikes are not ore.
+     */
+    public record CaptureRequest(int shotId, boolean hideHud, boolean saveEmpty, List<OreBox> boxes) {
     }
 
     private FarmProtocol() {
@@ -61,6 +65,7 @@ public final class FarmProtocol {
     public static CaptureRequest readCaptureBody(DataInputStream in) throws IOException {
         int shotId = in.readInt();
         boolean hideHud = in.readBoolean();
+        boolean saveEmpty = in.readBoolean();
         int n = in.readInt();
         List<OreBox> boxes = new ArrayList<>(Math.max(0, n));
         for (int i = 0; i < n; i++) {
@@ -73,7 +78,7 @@ public final class FarmProtocol {
             int maxZ = in.readInt();
             boxes.add(new OreBox(label, minX, minY, minZ, maxX, maxY, maxZ));
         }
-        return new CaptureRequest(shotId, hideHud, boxes);
+        return new CaptureRequest(shotId, hideHud, saveEmpty, boxes);
     }
 
     /** Convenience: open a {@link DataInputStream} over a payload. */

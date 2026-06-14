@@ -76,6 +76,28 @@ public final class DatasetWriter {
         }
     }
 
+    /**
+     * Write a hard-negative frame: the image plus an EMPTY label file, so the
+     * model learns the confuser block in view is not ore. Returns the PNG or null.
+     */
+    public File writeEmpty(NativeImage image, int shotId) {
+        if (!imagesDir.exists() && !imagesDir.mkdirs()) {
+            return null;
+        }
+        if (!labelsDir.exists() && !labelsDir.mkdirs()) {
+            return null;
+        }
+        try {
+            File png = new File(imagesDir, fileName(shotId));
+            image.writeTo(png);
+            Files.write(new File(labelsDir, baseName(png) + ".txt").toPath(), new byte[0]);
+            writeClassesOnce();
+            return png;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     /** Image file name for a shot: {@code collected_<ts>_<shotId>.png}. */
     public static String fileName(int shotId) {
         return "collected_" + System.currentTimeMillis() + "_" + shotId + ".png";

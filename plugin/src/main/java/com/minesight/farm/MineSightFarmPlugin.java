@@ -6,6 +6,7 @@ import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -17,8 +18,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -153,7 +156,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         visited.load(at.getWorld().getName());
         locator.clearResults();
         locator.configure(at.getWorld(), at.getBlockX(), at.getBlockZ(), radius,
-                Set.of(ore), band[0], band[1]);
+                Set.of(ore), band[0], band[1], Set.of());
         locator.start();
         sender.sendMessage("MineSight: scanning for " + ore + " within " + radius
                 + " blocks, Y " + band[0] + ".." + band[1] + ". Use /minesightfarm status.");
@@ -181,7 +184,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
                 sender.sendMessage("MineSight: count must be a number; using " + count + ".");
             }
         }
-        session = new CaptureSession(this, locator, visited, true, count, true);
+        session = new CaptureSession(this, locator, visited, true, count, true, 0.0, Map.of());
         sender.sendMessage("MineSight: capturing " + count + " frame(s) across all cameras. /minesightfarm status to watch.");
         return true;
     }
@@ -262,25 +265,35 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         int yHi = optInt(s, "y_max", 72);
         int target = optInt(s, "target", 0);
         boolean avoidRevisits = !s.has("avoid_revisits") || s.get("avoid_revisits").getAsBoolean();
+        double hardNeg = Math.max(0.0, Math.min(0.9, optDouble(s, "hard_negative_ratio", 0.0)));
         Set<String> wanted = parseClasses(s);
+        Set<Material> confMats = hardNeg > 0 ? parseConfuserMaterials(s) : Set.of();
+        Map<String, Integer> classGoals = parseClassTargets(s);
         // Reading the camera's location must run on its region thread (Folia).
         camera.getScheduler().run(this, t -> {
             Location loc = camera.getLocation();
             visited.load(loc.getWorld().getName());
             locator.clearResults();
-            locator.configure(loc.getWorld(), loc.getBlockX(), loc.getBlockZ(), radius, wanted, yLo, yHi);
+            locator.configure(loc.getWorld(), loc.getBlockX(), loc.getBlockZ(),
+                    radius, wanted, yLo, yHi, confMats);
             locator.start();
             if (start && target > 0 && (session == null || session.isDone())) {
-                session = new CaptureSession(this, locator, visited, avoidRevisits, target, true);
+                session = new CaptureSession(this, locator, visited, avoidRevisits, target, true,
+                        hardNeg, classGoals);
             }
             getLogger().info("Collector " + (start ? "start" : "live update") + ": radius "
                     + radius + ", ore " + wanted + ", Y " + yLo + ".." + yHi
-                    + (start && target > 0 ? ", target " + target : "") + ", revisits=" + !avoidRevisits);
+                    + (start && target > 0 ? ", target " + target : "")
+                    + ", hardNeg=" + hardNeg + (classGoals.isEmpty() ? "" : ", goals " + classGoals));
         }, null);
     }
 
     private static int optInt(JsonObject s, String key, int def) {
         return s.has(key) && s.get(key).isJsonPrimitive() ? s.get(key).getAsInt() : def;
+    }
+
+    private static double optDouble(JsonObject s, String key, double def) {
+        return s.has(key) && s.get(key).isJsonPrimitive() ? s.get(key).getAsDouble() : def;
     }
 
     /** Ore labels from the settings' {@code classes} array, or all known ores. */
@@ -294,18 +307,44 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         return out.isEmpty() ? OreCatalog.labels() : out;
     }
 
+    /** Confuser materials for the enabled categories (for hard-negative shots). */
+    private static Set<Material> parseConfuserMaterials(JsonObject s) {
+        Set<String> cats = new HashSet<>();
+        if (s.has("confuser_categories") && s.get("confuser_categories").isJsonArray()) {
+            for (JsonElement e : s.getAsJsonArray("confuser_categories")) {
+                cats.add(e.getAsString());
+            }
+        }
+        return OreCatalog.confusers(cats);
+    }
+
+    /** Per-class box goals from {@code class_targets}. */
+    private static Map<String, Integer> parseClassTargets(JsonObject s) {
+        Map<String, Integer> goals = new HashMap<>();
+        if (s.has("class_targets") && s.get("class_targets").isJsonObject()) {
+            for (Map.Entry<String, JsonElement> e : s.getAsJsonObject("class_targets").entrySet()) {
+                if (e.getValue().isJsonPrimitive()) {
+                    goals.put(e.getKey(), e.getValue().getAsInt());
+                }
+            }
+        }
+        return goals;
+    }
+
     // ---- plugin-channel transport -----------------------------------------
 
     /**
      * plugin -> client {@code capture}: "photograph these ore AABBs from where
      * you stand". One block per box: min (x,y,z) .. max (x+1,y+1,z+1).
      */
-    void sendCapture(Player player, int shotId, boolean hideHud, List<FoliaOreLocator.OrePos> boxes) {
+    void sendCapture(Player player, int shotId, boolean hideHud,
+                     List<FoliaOreLocator.OrePos> boxes, boolean saveEmpty) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (DataOutputStream d = new DataOutputStream(out)) {
             d.writeUTF("capture");
             d.writeInt(shotId);
             d.writeBoolean(hideHud);
+            d.writeBoolean(saveEmpty);
             d.writeInt(boxes.size());
             for (FoliaOreLocator.OrePos b : boxes) {
                 d.writeUTF(b.label());

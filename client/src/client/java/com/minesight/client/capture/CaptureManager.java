@@ -184,8 +184,21 @@ public final class CaptureManager {
         }
 
         if (visible.isEmpty()) {
-            LOG.info("Capture {}: no visible ore, nothing saved", req.shotId());
-            finish(req, false, 0);
+            if (req.saveEmpty()) {
+                // Hard negative: save the frame with an empty label (the confuser
+                // in view is deliberately not boxed).
+                ScreenshotRecorder.takeScreenshot(fb, image -> {
+                    File saved = writer.writeEmpty(image, req.shotId());
+                    if (saved != null) {
+                        LOG.info("Capture {} saved hard-negative -> {}", req.shotId(), saved.getName());
+                        streamToGui(saved, List.of(), width, height);
+                    }
+                    finish(req, saved != null, 0);
+                });
+            } else {
+                LOG.info("Capture {}: no visible ore, nothing saved", req.shotId());
+                finish(req, false, 0);
+            }
             return;
         }
 

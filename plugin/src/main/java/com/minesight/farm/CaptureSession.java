@@ -8,18 +8,27 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Orchestrates a capture run across every connected camera player in parallel:
  * each camera independently polls located ore from the shared
  * {@link FoliaOreLocator}, teleports, lets the client settle + photograph, awaits
- * the {@code captured} ack, and repeats - all draining one ore queue toward a
- * shared target. This is the 2.0 throughput win: N cameras on one server.
+ * the {@code captured} ack, and repeats - all draining one queue toward a shared
+ * target. This is the 2.0 throughput win: N cameras on one server.
+ *
+ * <p>Two collection-quality behaviors layer on top:
+ * <ul>
+ *   <li><b>Per-class goals</b>: with {@code classGoals} set, each shot prefers
+ *       the class furthest behind its goal, and the run continues until every
+ *       goal is met (or the image cap is hit).</li>
+ *   <li><b>Hard negatives</b>: a {@code hardNegRatio} fraction of shots target a
+ *       surface confuser block and ask the client to save an empty-label frame,
+ *       teaching the model those look-alikes are NOT ore.</li>
+ * </ul>
  *
  * <p>{@link #tick} runs on the global-region heartbeat; teleports + packet sends
- * are dispatched onto each player's region thread (Folia). With
- * {@code avoidRevisits} it skips and records ore in the {@link VisitedStore} so a
- * vein is never shot twice across sessions.
+ * dispatch onto each player's region thread (Folia).
  */
 public final class CaptureSession {
 
@@ -28,7 +37,7 @@ public final class CaptureSession {
     private static final int TP_SETTLE_TICKS = 10;
     private static final int CAP_TIMEOUT_TICKS = 200;
     private static final int ATTEMPT_FACTOR = 8;
-    private static final int MAX_POLL_SKIP = 64;  // bound the visited-skip loop
+    private static final int MAX_POLL_SKIP = 64;
 
     /** Per-camera state machine. */
     private static final class Cam {
@@ -36,7 +45,8 @@ public final class CaptureSession {
         State state = State.IDLE;
         int stateTicks;
         volatile int currentShot = -1;
-        FoliaOreLocator.OrePos currentOre;
+        FoliaOreLocator.OrePos currentTarget;
+        boolean hardNeg;
         volatile boolean acked;
         volatile boolean ackOk;
 
@@ -51,21 +61,27 @@ public final class CaptureSession {
     private final boolean avoidRevisits;
     private final int target;
     private final boolean hideHud;
+    private final double hardNegRatio;
+    private final Map<String, Integer> classGoals;
 
     private final Map<UUID, Cam> cams = new HashMap<>();
+    private final Map<String, Integer> classSaved = new HashMap<>();
     private volatile boolean done;
     private int saved;
     private int failed;
     private int shotCounter;
 
     public CaptureSession(MineSightFarmPlugin plugin, FoliaOreLocator locator, VisitedStore visited,
-                          boolean avoidRevisits, int target, boolean hideHud) {
+                          boolean avoidRevisits, int target, boolean hideHud,
+                          double hardNegRatio, Map<String, Integer> classGoals) {
         this.plugin = plugin;
         this.locator = locator;
         this.visited = visited;
         this.avoidRevisits = avoidRevisits;
         this.target = target;
         this.hideHud = hideHud;
+        this.hardNegRatio = hardNegRatio;
+        this.classGoals = classGoals == null ? Map.of() : Map.copyOf(classGoals);
     }
 
     public boolean isDone() {
@@ -73,8 +89,9 @@ public final class CaptureSession {
     }
 
     public String status() {
-        return String.format("capture %s: %d/%d saved, %d failed, %d camera(s)",
-                done ? "done" : "running", saved, target, failed, cams.size());
+        return String.format("capture %s: %d/%d saved, %d failed, %d camera(s)%s",
+                done ? "done" : "running", saved, target, failed, cams.size(),
+                classGoals.isEmpty() ? "" : " | goals " + classSaved + "/" + classGoals);
     }
 
     public void stop() {
@@ -97,16 +114,16 @@ public final class CaptureSession {
         if (done) {
             return;
         }
-        if (saved >= target || (saved + failed) >= target * ATTEMPT_FACTOR) {
+        if (saved >= target || goalsMet() || (saved + failed) >= target * ATTEMPT_FACTOR) {
             finish();
             return;
         }
         refreshCameras();
         if (cams.isEmpty()) {
-            return;  // wait for a camera to connect
+            return;
         }
-        // Out of ore everywhere and every camera idle -> the area is exhausted.
-        if (locator.available() == 0 && !locator.isRunning() && locator.exhausted()
+        if (locator.available() == 0 && locator.availableConfusers() == 0
+                && !locator.isRunning() && locator.exhausted()
                 && cams.values().stream().allMatch(c -> c.state == State.IDLE)) {
             finish();
             return;
@@ -114,6 +131,14 @@ public final class CaptureSession {
         for (Cam cam : cams.values()) {
             advance(cam);
         }
+    }
+
+    private boolean goalsMet() {
+        if (classGoals.isEmpty()) {
+            return false;
+        }
+        return classGoals.entrySet().stream()
+                .allMatch(e -> classSaved.getOrDefault(e.getKey(), 0) >= e.getValue());
     }
 
     private void refreshCameras() {
@@ -134,22 +159,19 @@ public final class CaptureSession {
                 if (++cam.stateTicks >= TP_SETTLE_TICKS) {
                     cam.acked = false;
                     cam.ackOk = false;
-                    plugin.sendCapture(player, cam.currentShot, hideHud, List.of(cam.currentOre));
+                    if (cam.hardNeg) {
+                        plugin.sendCapture(player, cam.currentShot, hideHud, List.of(), true);
+                    } else {
+                        plugin.sendCapture(player, cam.currentShot, hideHud,
+                                List.of(cam.currentTarget), false);
+                    }
                     cam.state = State.CAP_WAIT;
                     cam.stateTicks = 0;
                 }
             }
             case CAP_WAIT -> {
                 if (cam.acked) {
-                    if (cam.ackOk) {
-                        saved++;
-                        if (avoidRevisits) {
-                            visited.add(VisitedStore.key(
-                                    cam.currentOre.x(), cam.currentOre.y(), cam.currentOre.z()));
-                        }
-                    } else {
-                        failed++;
-                    }
+                    onShotDone(cam, cam.ackOk);
                     cam.state = State.IDLE;
                 } else if (++cam.stateTicks >= CAP_TIMEOUT_TICKS) {
                     failed++;
@@ -161,21 +183,78 @@ public final class CaptureSession {
         }
     }
 
-    private void beginShot(Cam cam, Player player) {
-        FoliaOreLocator.OrePos ore = pollUnvisited();
-        if (ore == null) {
-            return;  // nothing available right now; tick() handles exhaustion
+    private void onShotDone(Cam cam, boolean ok) {
+        if (!ok) {
+            failed++;
+            return;
         }
-        cam.currentOre = ore;
+        saved++;
+        if (avoidRevisits) {
+            visited.add(VisitedStore.key(
+                    cam.currentTarget.x(), cam.currentTarget.y(), cam.currentTarget.z()));
+        }
+        if (!cam.hardNeg) {
+            classSaved.merge(cam.currentTarget.label(), 1, Integer::sum);
+        }
+    }
+
+    private void beginShot(Cam cam, Player player) {
+        // Roll for a hard-negative (confuser) shot.
+        if (hardNegRatio > 0 && ThreadLocalRandom.current().nextDouble() < hardNegRatio) {
+            FoliaOreLocator.OrePos conf = pollUnvisited(locator::pollConfuser);
+            if (conf != null) {
+                startShot(cam, player, conf, true);
+                return;
+            }
+        }
+        FoliaOreLocator.OrePos ore = pollOre();
+        if (ore != null) {
+            startShot(cam, player, ore, false);
+        }
+    }
+
+    private void startShot(Cam cam, Player player, FoliaOreLocator.OrePos target, boolean hardNeg) {
+        cam.currentTarget = target;
+        cam.hardNeg = hardNeg;
         cam.currentShot = ++shotCounter;
-        teleport(player, ore);
+        teleport(player, target);
         cam.state = State.TP_WAIT;
         cam.stateTicks = 0;
     }
 
-    private FoliaOreLocator.OrePos pollUnvisited() {
+    /** Pick ore, preferring the class furthest behind its goal. */
+    private FoliaOreLocator.OrePos pollOre() {
+        String lagging = laggingClass();
+        if (lagging != null) {
+            FoliaOreLocator.OrePos p = pollUnvisited(() -> locator.pollClass(lagging));
+            if (p != null) {
+                return p;
+            }
+        }
+        return pollUnvisited(locator::poll);
+    }
+
+    /** The goal class with the largest unmet deficit, or null if none lagging. */
+    private String laggingClass() {
+        String best = null;
+        int bestDeficit = 0;
+        for (Map.Entry<String, Integer> e : classGoals.entrySet()) {
+            int deficit = e.getValue() - classSaved.getOrDefault(e.getKey(), 0);
+            if (deficit > bestDeficit && locator.availableClass(e.getKey()) > 0) {
+                bestDeficit = deficit;
+                best = e.getKey();
+            }
+        }
+        return best;
+    }
+
+    private interface Poller {
+        FoliaOreLocator.OrePos poll();
+    }
+
+    private FoliaOreLocator.OrePos pollUnvisited(Poller poller) {
         for (int i = 0; i < MAX_POLL_SKIP; i++) {
-            FoliaOreLocator.OrePos p = locator.poll();
+            FoliaOreLocator.OrePos p = poller.poll();
             if (p == null) {
                 return null;
             }
@@ -186,10 +265,9 @@ public final class CaptureSession {
         return null;
     }
 
-    private void teleport(Player player, FoliaOreLocator.OrePos ore) {
-        player.getScheduler().run(plugin, t -> {
-            Location target = new Location(player.getWorld(),
-                    ore.x() + 0.5, ore.y() + 0.5, ore.z() + 0.5);
+    private void teleport(Player player, FoliaOreLocator.OrePos t) {
+        player.getScheduler().run(plugin, task -> {
+            Location target = new Location(player.getWorld(), t.x() + 0.5, t.y() + 0.5, t.z() + 0.5);
             Location eye = target.clone().add(3.0, 2.0, 3.0);
             eye.setDirection(target.toVector().subtract(eye.toVector()));
             player.setGameMode(GameMode.SPECTATOR);
@@ -201,6 +279,7 @@ public final class CaptureSession {
         done = true;
         visited.save();
         plugin.getLogger().info("Capture session finished: " + saved + " saved, "
-                + failed + " failed (target " + target + ").");
+                + failed + " failed (target " + target + ")"
+                + (classGoals.isEmpty() ? "" : ", goals " + classSaved + "/" + classGoals) + ".");
     }
 }

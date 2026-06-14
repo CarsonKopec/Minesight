@@ -7,49 +7,56 @@ import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Folia-safe successor to the 1.8.9 {@code ServerOreLocator}.
  *
- * <p>The 1.8.9 version single-threaded chunk gen inside each client. Here one
- * headless Folia server force-generates and scans chunks for wanted ore using
- * the regionized scheduler, so chunks scattered across the map are generated on
- * different CPU cores - the real reason 2.0 scales to many cameras on one box.
+ * <p>One headless Folia server force-generates and scans chunks for wanted ore
+ * using the regionized scheduler, so chunks scattered across the map are
+ * generated on different CPU cores - the real reason 2.0 scales to many cameras.
  *
- * <p>Threading contract (all enforced internally):
- * <ul>
- *   <li>{@link #configure} / {@link #start} / {@link #stop} - call from any
- *       plugin thread (cheap, just sets fields).</li>
- *   <li>{@link #pump} - call on a repeating GLOBAL-region task. It only launches
- *       async chunk loads; it never touches blocks itself.</li>
- *   <li>Chunk gen is async ({@link World#getChunkAtAsync}); the per-chunk
- *       {@link ChunkSnapshot} is taken on the owning region thread, then the
- *       heavy block scan runs on the async scheduler (snapshots are thread-safe
- *       to read). Results land in a {@link ConcurrentLinkedQueue} the caller
- *       drains from any thread.</li>
- * </ul>
+ * <p>Results are kept in <b>per-class</b> queues so the capture session can hunt
+ * whichever ore is furthest behind its goal ({@link #pollClass}), plus a separate
+ * <b>confuser</b> queue scanned in a surface band for hard-negative shots
+ * ({@link #pollConfuser}).
+ *
+ * <p>Threading: {@link #configure}/{@link #start}/{@link #stop} from any thread;
+ * {@link #pump} on a global-region task (launches async chunk loads only); chunk
+ * gen is async, the snapshot is taken on the owning region thread, and the scan
+ * runs on the async scheduler (snapshots are thread-safe). Queues drain anywhere.
  */
 public final class FoliaOreLocator {
 
-    /** A located ore block in world coordinates. */
+    /** A located block in world coordinates ({@code label} empty for confusers). */
     public record OrePos(int x, int y, int z, String label) {
     }
 
     private static final int RESULT_CAP = 512;
-    /** How many chunk gen+scan pipelines may be outstanding at once. */
+    private static final int CONFUSER_CAP = 128;
     private static final int MAX_IN_FLIGHT = 12;
+    /** Surface band scanned for confuser blocks (flowers/grass live up here). */
+    private static final int CONF_BAND_LO = 55;
+    private static final int CONF_BAND_HI = 120;
 
     private final Plugin plugin;
-    private final ConcurrentLinkedQueue<OrePos> results = new ConcurrentLinkedQueue<>();
+    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<OrePos>> oreByClass = new ConcurrentHashMap<>();
+    private final ConcurrentLinkedQueue<OrePos> confusers = new ConcurrentLinkedQueue<>();
+    private final AtomicInteger oreQueued = new AtomicInteger();
+    private final AtomicInteger confuserQueued = new AtomicInteger();
 
     private volatile boolean running;
     private volatile World world;
     private volatile Set<String> wanted = Set.of();
+    private volatile Set<Material> confuserMaterials = Set.of();
     private volatile int yLo;
     private volatile int yHi;
+    private volatile int confLo = CONF_BAND_LO;
+    private volatile int confHi = CONF_BAND_HI;
 
     private volatile List<long[]> chunkOrder = new ArrayList<>();
     private final AtomicInteger cursor = new AtomicInteger();
@@ -62,15 +69,22 @@ public final class FoliaOreLocator {
     }
 
     /**
-     * (Re)aim the locator at an area. Clears scan progress but keeps already
-     * queued results so a re-aim mid-session doesn't drop confirmed ore.
+     * (Re)aim the locator at an area. Clears scan progress but keeps queued
+     * results so a re-aim mid-session doesn't drop confirmed ore.
+     *
+     * @param confuserMats blocks to also scan (surface band) for hard negatives;
+     *                     empty to skip confuser scanning entirely.
      */
     public synchronized void configure(World world, int centerX, int centerZ, int radiusBlocks,
-                                       Set<String> wantedLabels, int yLoIn, int yHiIn) {
+                                       Set<String> wantedLabels, int yLoIn, int yHiIn,
+                                       Set<Material> confuserMats) {
         this.world = world;
         this.wanted = Set.copyOf(wantedLabels);
+        this.confuserMaterials = Set.copyOf(confuserMats);
         this.yLo = Math.max(world.getMinHeight(), yLoIn);
         this.yHi = Math.min(world.getMaxHeight() - 1, yHiIn);
+        this.confLo = Math.max(world.getMinHeight(), CONF_BAND_LO);
+        this.confHi = Math.min(world.getMaxHeight() - 1, CONF_BAND_HI);
 
         final int ccx = centerX >> 4;
         final int ccz = centerZ >> 4;
@@ -112,7 +126,16 @@ public final class FoliaOreLocator {
     }
 
     public int available() {
-        return results.size();
+        return oreQueued.get();
+    }
+
+    public int availableClass(String label) {
+        Queue<OrePos> q = oreByClass.get(label);
+        return q == null ? 0 : q.size();
+    }
+
+    public int availableConfusers() {
+        return confuserQueued.get();
     }
 
     public int chunksScanned() {
@@ -123,18 +146,45 @@ public final class FoliaOreLocator {
         return oresFound.get();
     }
 
-    /** Drain one located ore, or {@code null} if none queued yet. */
+    /** Drain one located ore of any class (first non-empty queue), or null. */
     public OrePos poll() {
-        return results.poll();
+        for (Queue<OrePos> q : oreByClass.values()) {
+            OrePos p = q.poll();
+            if (p != null) {
+                oreQueued.decrementAndGet();
+                return p;
+            }
+        }
+        return null;
     }
 
-    /** Look at the next located ore without removing it. */
-    public OrePos peek() {
-        return results.peek();
+    /** Drain one located ore of a specific class, or null if that queue is dry. */
+    public OrePos pollClass(String label) {
+        Queue<OrePos> q = oreByClass.get(label);
+        if (q == null) {
+            return null;
+        }
+        OrePos p = q.poll();
+        if (p != null) {
+            oreQueued.decrementAndGet();
+        }
+        return p;
+    }
+
+    /** Drain one located confuser block (for a hard-negative shot), or null. */
+    public OrePos pollConfuser() {
+        OrePos p = confusers.poll();
+        if (p != null) {
+            confuserQueued.decrementAndGet();
+        }
+        return p;
     }
 
     public void clearResults() {
-        results.clear();
+        oreByClass.clear();
+        confusers.clear();
+        oreQueued.set(0);
+        confuserQueued.set(0);
     }
 
     /**
@@ -147,7 +197,7 @@ public final class FoliaOreLocator {
         }
         List<long[]> order = chunkOrder;
         while (inFlight.get() < MAX_IN_FLIGHT
-                && results.size() < RESULT_CAP) {
+                && (oreQueued.get() < RESULT_CAP || confuserQueued.get() < CONFUSER_CAP)) {
             int idx = cursor.getAndIncrement();
             if (idx >= order.size()) {
                 return;  // exhausted; outstanding work will still drain in
@@ -168,7 +218,6 @@ public final class FoliaOreLocator {
                 inFlight.decrementAndGet();
                 return;
             }
-            // Hop to the region that owns this chunk to snapshot it safely...
             plugin.getServer().getRegionScheduler().execute(plugin, w, cx, cz, () -> {
                 ChunkSnapshot snap;
                 try {
@@ -177,7 +226,6 @@ public final class FoliaOreLocator {
                     inFlight.decrementAndGet();
                     return;
                 }
-                // ...then scan the thread-safe snapshot off the region thread.
                 plugin.getServer().getAsyncScheduler().runNow(plugin,
                         task -> {
                             try {
@@ -192,6 +240,7 @@ public final class FoliaOreLocator {
 
     private void scanSnapshot(ChunkSnapshot snap, int cx, int cz) {
         final Set<String> want = wanted;
+        final Set<Material> confMats = confuserMaterials;
         final int lo = yLo;
         final int hi = yHi;
         final int baseX = cx << 4;
@@ -199,17 +248,22 @@ public final class FoliaOreLocator {
         chunksScanned.incrementAndGet();
         for (int x = 0; x < 16; x++) {
             for (int z = 0; z < 16; z++) {
-                for (int y = lo; y <= hi; y++) {
-                    Material block = snap.getBlockType(x, y, z);
-                    String label = OreCatalog.labelFor(block);
-                    if (label != null && want.contains(label)) {
-                        // Queue every wanted ore; the client capture pipeline
-                        // verifies real visibility (raycast + pixel checks), so
-                        // no fragile server-side air test here.
-                        results.add(new OrePos(baseX + x, y, baseZ + z, label));
-                        oresFound.incrementAndGet();
-                        if (results.size() >= RESULT_CAP) {
-                            return;
+                if (oreQueued.get() < RESULT_CAP) {
+                    for (int y = lo; y <= hi; y++) {
+                        String label = OreCatalog.labelFor(snap.getBlockType(x, y, z));
+                        if (label != null && want.contains(label)) {
+                            oreByClass.computeIfAbsent(label, k -> new ConcurrentLinkedQueue<>())
+                                    .add(new OrePos(baseX + x, y, baseZ + z, label));
+                            oreQueued.incrementAndGet();
+                            oresFound.incrementAndGet();
+                        }
+                    }
+                }
+                if (!confMats.isEmpty() && confuserQueued.get() < CONFUSER_CAP) {
+                    for (int y = confLo; y <= confHi; y++) {
+                        if (confMats.contains(snap.getBlockType(x, y, z))) {
+                            confusers.add(new OrePos(baseX + x, y, baseZ + z, ""));
+                            confuserQueued.incrementAndGet();
                         }
                     }
                 }
