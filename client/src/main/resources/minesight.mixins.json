@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.minesight.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "RenderSystemMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

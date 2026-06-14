@@ -10,6 +10,9 @@
   "entrypoints": {
     "client": ["com.minesight.client.MineSightClient"]
   },
+  "mixins": [
+    "minesight.mixins.json"
+  ],
   "depends": {
     "fabricloader": ">=0.16",
     "minecraft": "~1.21.11",
