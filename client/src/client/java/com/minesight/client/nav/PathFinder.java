@@ -125,8 +125,8 @@ public final class PathFinder {
                         added = true;
                         break;
                     }
-                    if (!passable(down)) {
-                        break;
+                    if (!passable(down) || water(down)) {
+                        break;  // hit ground, or water - don't dive in, bridge over it
                     }
                 }
             }
@@ -137,8 +137,9 @@ public final class PathFinder {
                 added = true;
             }
             // Bridge across a gap (cardinal): step onto a floorless cell by placing
-            // a block under it - the way over lava/voids. Needs blocks + a support.
-            if (!added && !diagonal && clear(flat) && !hazard(flat)
+            // a block under it - the way over water/lava/voids. Needs blocks + a
+            // support, and the head must stay above water (don't bridge underwater).
+            if (!added && !diagonal && clear(flat) && !hazard(flat) && !water(flat.up())
                     && !solidGround(flat.down()) && solid(pos.down()) && hasBuildingBlocks()) {
                 out.add(flat);
             }
@@ -243,9 +244,15 @@ public final class PathFinder {
         return null;
     }
 
-    /** Feet position: room for the player, solid ground, and not a hazard. */
+    /** Feet position: room for the player, solid ground, not a hazard, and the
+     *  head isn't submerged (so deep water is bridged over, not swum through;
+     *  wading shallow water with the head in air is still fine). */
     private boolean standable(BlockPos feet) {
-        return clear(feet) && solidGround(feet.down()) && !hazard(feet);
+        return clear(feet) && solidGround(feet.down()) && !hazard(feet) && !water(feet.up());
+    }
+
+    private boolean water(BlockPos pos) {
+        return mc.world.getBlockState(pos).isOf(Blocks.WATER);
     }
 
     /** Standing here hurts: fire/lava/cactus/berries/powder snow at body level,
