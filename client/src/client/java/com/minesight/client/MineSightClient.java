@@ -8,6 +8,7 @@ import com.minesight.client.detect.OreMemory;
 import com.minesight.client.detect.OverlayMode;
 import com.minesight.client.detect.OverlayRenderer;
 import com.minesight.client.detect.RadarRenderer;
+import com.minesight.client.detect.WorldHighlightRenderer;
 import com.minesight.client.detect.WorldMarkerRenderer;
 import com.minesight.client.net.FarmPayload;
 import com.minesight.client.net.FarmProtocol;
@@ -17,6 +18,7 @@ import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
@@ -68,8 +70,11 @@ public class MineSightClient implements ClientModInitializer {
         engine = new EngineClient(store);
         anchor = new DetectionAnchor(mc, store, memory);
         OverlayRenderer overlay = new OverlayRenderer(store);
+        WorldHighlightRenderer highlights = new WorldHighlightRenderer(mc, memory);
         WorldMarkerRenderer markers = new WorldMarkerRenderer(mc, memory);
         RadarRenderer radar = new RadarRenderer(mc, memory);
+        // 3D ore boxes in world space; 2D detection boxes + marker labels + radar on the HUD.
+        WorldRenderEvents.AFTER_ENTITIES.register(highlights::render);
         HudRenderCallback.EVENT.register((ctx, tick) -> {
             overlay.render(ctx);
             markers.render(ctx);

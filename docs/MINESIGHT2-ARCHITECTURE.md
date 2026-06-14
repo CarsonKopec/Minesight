@@ -160,11 +160,13 @@ plugin-side. Client → GUI image upload: reuse `collect_image` (`PROTOCOL.md`).
   **Apply live** retunes scan-on-plugin and render-on-client independently.
 - ✅ **Phase 3 world module** ported (compiles): `OreMemory` (persistent
   per-world ore memory), `DetectionAnchor` (unproject each detection + raycast →
-  record into memory, screen→world via the inverted camera matrix),
-  `WorldMarkerRenderer` (through-wall markers + per-vein labels, drawn on the
-  HUD by projecting memory rather than using the reworked world-render pipeline),
-  `RadarRenderer` (top-down minimap + suggestion + depth advisor, F7). Phase 3
-  feature-complete.
+  record into memory, screen→world via the inverted camera matrix; **verifies the
+  hit block is a real ore via `OreBlocks` and records the world's actual label**,
+  so a held ore item / moved block can't mis-highlight), `WorldHighlightRenderer`
+  (**true 3D wireframe boxes** on the blocks via `WorldRenderEvents` +
+  `VertexRendering.drawOutline` into `RenderLayers.LINES`), `WorldMarkerRenderer`
+  (per-vein HUD labels), `RadarRenderer` (top-down minimap + suggestion + depth
+  advisor, F7). Phase 3 feature-complete.
 - ⏳ **Overlay/markers/radar still to verify in-game** (needs the engine running
   + a window it captures); markers/anchoring share the capture FOV/near
   calibration.

@@ -5,6 +5,7 @@ import net.minecraft.client.network.ServerInfo;
 import net.minecraft.client.render.Camera;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 import org.joml.Matrix4f;
@@ -91,8 +92,16 @@ public final class DetectionAnchor {
             BlockHitResult hit = mc.world.raycast(new RaycastContext(
                     near, end, RaycastContext.ShapeType.COLLIDER,
                     RaycastContext.FluidHandling.NONE, mc.player));
-            if (hit.getType() == HitResult.Type.BLOCK) {
-                memory.record(hit.getBlockPos(), d.label, d.confidence);
+            if (hit.getType() != HitResult.Type.BLOCK) {
+                continue;
+            }
+            // Verify the ray actually landed on a real ore. Otherwise a held ore
+            // item (ray passes to the wall behind) or a moved/placed block would
+            // get highlighted. Trust the world's block type as the label.
+            BlockPos bp = hit.getBlockPos();
+            String actual = OreBlocks.labelFor(mc.world.getBlockState(bp).getBlock());
+            if (actual != null) {
+                memory.record(bp, actual, d.confidence);
             }
         }
         memory.saveIfDirty();
