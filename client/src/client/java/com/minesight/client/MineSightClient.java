@@ -10,6 +10,7 @@ import com.minesight.client.detect.OverlayRenderer;
 import com.minesight.client.detect.RadarRenderer;
 import com.minesight.client.detect.WorldHighlightRenderer;
 import com.minesight.client.detect.WorldMarkerRenderer;
+import com.minesight.client.nav.MiningAgent;
 import com.minesight.client.nav.Navigator;
 import com.minesight.client.net.FarmPayload;
 import com.minesight.client.net.FarmProtocol;
@@ -53,10 +54,12 @@ public class MineSightClient implements ClientModInitializer {
     private EngineClient engine;
     private DetectionAnchor anchor;
     private Navigator navigator;
+    private MiningAgent agent;
     private KeyBinding overlayKey;
     private KeyBinding reviewKey;
     private KeyBinding radarKey;
     private KeyBinding navKey;
+    private KeyBinding agentKey;
 
     @Override
     public void onInitializeClient() {
@@ -77,9 +80,11 @@ public class MineSightClient implements ClientModInitializer {
         WorldMarkerRenderer markers = new WorldMarkerRenderer(mc, memory);
         RadarRenderer radar = new RadarRenderer(mc, memory);
         navigator = new Navigator(mc, memory);
-        // 3D ore boxes + nav route in world space; 2D boxes + labels + radar on the HUD.
+        agent = new MiningAgent(mc, memory);
+        // 3D ore boxes + nav/agent routes in world space; 2D boxes + labels + radar on the HUD.
         WorldRenderEvents.AFTER_ENTITIES.register(highlights::render);
         WorldRenderEvents.AFTER_ENTITIES.register(navigator.renderer()::render);
+        WorldRenderEvents.AFTER_ENTITIES.register(agent.renderer()::render);
         HudRenderCallback.EVENT.register((ctx, tick) -> {
             overlay.render(ctx);
             markers.render(ctx);
@@ -98,6 +103,9 @@ public class MineSightClient implements ClientModInitializer {
         navKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.minesight.navigate", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6,
                 KeyBinding.Category.MISC));
+        agentKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.minesight.automine", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F4,
+                KeyBinding.Category.MISC));
 
         // One client-tick handler: capture state machine, engine I/O, anchoring,
         // keybinds.
@@ -106,8 +114,18 @@ public class MineSightClient implements ClientModInitializer {
             engine.tick(client);
             anchor.tick();
             navigator.tick();
+            agent.tick();
             while (navKey.wasPressed()) {
                 navigator.toggle();
+                if (navigator.isActive()) {
+                    agent.stop();
+                }
+            }
+            while (agentKey.wasPressed()) {
+                agent.toggle();
+                if (agent.isActive()) {
+                    navigator.cancel();
+                }
             }
             while (overlayKey.wasPressed()) {
                 OverlayMode mode = OverlayMode.cycle();

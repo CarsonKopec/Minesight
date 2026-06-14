@@ -2,5 +2,6 @@
   "key.minesight.overlay": "MineSight: cycle overlay mode",
   "key.minesight.review": "MineSight: flag frame for review",
   "key.minesight.radar": "MineSight: toggle radar",
-  "key.minesight.navigate": "MineSight: navigate to nearest ore"
+  "key.minesight.navigate": "MineSight: navigate to nearest ore",
+  "key.minesight.automine": "MineSight: toggle auto-mine (autonomous)"
 }

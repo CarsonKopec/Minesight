@@ -48,6 +48,17 @@ public final class Navigator {
         return renderer;
     }
 
+    public boolean isActive() {
+        return active;
+    }
+
+    /** Force-stop (used when the autonomous agent takes over). */
+    public void cancel() {
+        if (active) {
+            stop();
+        }
+    }
+
     /** Keybind: start navigating to the nearest valuable ore, or stop. */
     public void toggle() {
         if (active) {
