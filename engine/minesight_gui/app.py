@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 import sys
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QTabWidget
 
 from minesight.logconf import setup_logging
 
+from . import theme
 from .clients_tab import ClientsTab
 from .collector_tab import CollectorTab
 from .datasets_tab import DatasetsTab
@@ -24,32 +24,15 @@ from .version_tab import VersionTab
 log = logging.getLogger("minesight.gui")
 
 
-def _dark_palette() -> QPalette:
-    p = QPalette()
-    bg, panel, text = QColor(30, 31, 34), QColor(43, 45, 48), QColor(220, 220, 220)
-    accent = QColor(74, 237, 217)
-    p.setColor(QPalette.ColorRole.Window, bg)
-    p.setColor(QPalette.ColorRole.WindowText, text)
-    p.setColor(QPalette.ColorRole.Base, panel)
-    p.setColor(QPalette.ColorRole.AlternateBase, bg)
-    p.setColor(QPalette.ColorRole.Text, text)
-    p.setColor(QPalette.ColorRole.Button, panel)
-    p.setColor(QPalette.ColorRole.ButtonText, text)
-    p.setColor(QPalette.ColorRole.Highlight, accent)
-    p.setColor(QPalette.ColorRole.HighlightedText, QColor(20, 20, 20))
-    p.setColor(QPalette.ColorRole.ToolTipBase, panel)
-    p.setColor(QPalette.ColorRole.ToolTipText, text)
-    p.setColor(QPalette.ColorRole.PlaceholderText, QColor(140, 140, 140))
-    return p
-
-
 class MainWindow(QMainWindow):
     def __init__(self, log_handler: QtLogHandler | None = None):
         super().__init__()
         self.setWindowTitle("MineSight Control Panel")
-        self.resize(1200, 820)
+        self.resize(1280, 860)
+        self.setMinimumSize(1040, 720)
 
         tabs = QTabWidget()
+        tabs.setDocumentMode(True)
         self.engine_tab = EngineTab()
         self.training_tab = TrainingTab()
         self.models_tab = ModelsTab()
@@ -61,20 +44,28 @@ class MainWindow(QMainWindow):
         self.farm2_tab = Farm2Tab()
         self.version_tab = VersionTab()
         self.logs_tab = LogsTab(log_handler) if log_handler is not None else None
-        tabs.addTab(self.engine_tab, "🔭 Engine")
-        tabs.addTab(self.models_tab, "🧠 Models")
-        tabs.addTab(self.training_tab, "🏋 Training")
-        tabs.addTab(self.datasets_tab, "🗂 Datasets")
-        tabs.addTab(self.collector_tab, "📷 Collector")
-        tabs.addTab(self.review_tab, "🔍 Review")
-        tabs.addTab(self.clients_tab, "🎮 Clients")
-        tabs.addTab(self.mod_tab, "🧩 Mod")
-        tabs.addTab(self.farm2_tab, "🌾 Farm 2.0")
-        tabs.addTab(self.version_tab, "⚙ Version")
+        # Ordered by workflow: run -> collect -> data -> train -> system.
+        tabs.addTab(self.engine_tab, "🔭  Engine")
+        tabs.addTab(self.collector_tab, "📷  Collector")
+        tabs.addTab(self.farm2_tab, "🌾  Farm 2.0")
+        tabs.addTab(self.clients_tab, "🎮  Clients")
+        tabs.addTab(self.datasets_tab, "🗂  Datasets")
+        tabs.addTab(self.review_tab, "🔍  Review")
+        tabs.addTab(self.training_tab, "🏋  Training")
+        tabs.addTab(self.models_tab, "🧠  Models")
+        tabs.addTab(self.mod_tab, "🧩  Mod")
+        tabs.addTab(self.version_tab, "⚙  Version")
         if self.logs_tab is not None:
-            tabs.addTab(self.logs_tab, "📜 Logs")
+            tabs.addTab(self.logs_tab, "📜  Logs")
         self.setCentralWidget(tabs)
         self._tabs = tabs
+
+        # Uniform padding inside every tab so the cards line up consistently.
+        for i in range(tabs.count()):
+            layout = tabs.widget(i).layout()
+            if layout is not None:
+                layout.setContentsMargins(16, 14, 16, 14)
+                layout.setSpacing(10)
 
         # Cross-wiring
         self.models_tab.weightsChosen.connect(self._use_weights)
@@ -157,8 +148,7 @@ def main() -> int:
     log.info("MineSight Control Panel starting")
 
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    app.setPalette(_dark_palette())
+    theme.apply(app)
     win = MainWindow(log_handler=handler)
     app.aboutToQuit.connect(win.shutdown_all)
     win.show()
