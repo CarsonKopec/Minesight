@@ -14,7 +14,11 @@ import org.bukkit.plugin.java.JavaPlugin;
  */
 public final class ZombieBot extends BotEpisode {
 
+    private static final int WALK_TICKS = 5;
+    private static final int SPRINT_TICKS = 3;
+
     private LivingEntity entity;
+    private int moveCountdown;
 
     public ZombieBot(JavaPlugin plugin, ArenaManager.Arena arena, BotParams params, int budget) {
         super(plugin, arena, params, budget);
@@ -42,6 +46,25 @@ public final class ZombieBot extends BotEpisode {
         if (entity != null && !entity.isDead()) {
             entity.teleport(center(to));
         }
+    }
+
+    @Override
+    protected void startMove(BotPos target) {
+        moveCountdown = pos.dist(goal) > params.sprintDist ? SPRINT_TICKS : WALK_TICKS;
+    }
+
+    @Override
+    protected boolean tickMove(BotPos target) {
+        if (--moveCountdown > 0) {
+            return false;
+        }
+        moveBody(target);   // discrete hop to the next cell
+        return true;
+    }
+
+    @Override
+    protected boolean moveStuck() {
+        return false;       // discrete stepping never stalls
     }
 
     @Override

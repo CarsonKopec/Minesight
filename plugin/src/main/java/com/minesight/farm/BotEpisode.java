@@ -29,9 +29,6 @@ public abstract class BotEpisode {
     private static final double LAVA_STEP_DMG = 3.0;
     private static final double LAVA_IN_DMG = 12.0;
     private static final double FALL_PER = 3.0;
-    private static final int WALK_TICKS = 5;
-    private static final int SPRINT_TICKS = 3;
-    private static final int PLACE_TICKS = 4;
 
     public record Result(double fitness, double score, int ores, int deaths, int ticks,
                          boolean cleared) {
@@ -59,7 +56,7 @@ public abstract class BotEpisode {
     private List<BotPos> path;
     private int wp;
     private BotPos target;
-    private BotPos goal;
+    protected BotPos goal;
 
     private List<BotPos> mineQueue;
     private boolean mineThenScore;
@@ -67,7 +64,6 @@ public abstract class BotEpisode {
     private BotPos mineCell;
     private int mineCountdown;
 
-    private int moveCountdown;
     private BotPos moveTo;
 
     protected BotEpisode(JavaPlugin plugin, ArenaManager.Arena arena, BotParams params, int budget) {
@@ -93,8 +89,17 @@ public abstract class BotEpisode {
     /** Create the visible bot at {@link #pos}. Region thread. */
     public abstract void spawn(String name);
 
-    /** Move the body to a cell (its center). */
+    /** Instantly reposition the body to a cell (respawn / fall-settle). */
     protected abstract void moveBody(BotPos to);
+
+    /** Begin walking toward a waypoint (called once when entering MOVE). */
+    protected abstract void startMove(BotPos target);
+
+    /** Advance the walk one tick; return true once the waypoint is reached. */
+    protected abstract boolean tickMove(BotPos target);
+
+    /** True if the body has stopped making progress (re-path / abandon). */
+    protected abstract boolean moveStuck();
 
     /** Break the block at this cell (clears it from the world). */
     protected abstract void breakBlock(BotPos b);
@@ -189,30 +194,28 @@ public abstract class BotEpisode {
             return;
         }
         if (w.y() == pos.y() && !finder.solid(w.down())) {
-            placeBlock(w.down(), Material.COBBLESTONE);
-            moveCountdown = PLACE_TICKS;
-            moveTo = w;
-            state = State.MOVE;
-            return;
+            placeBlock(w.down(), Material.COBBLESTONE);   // bridge, then walk across
         }
-        moveCountdown = pos.dist(goal) > params.sprintDist ? SPRINT_TICKS : WALK_TICKS;
         moveTo = w;
+        startMove(w);
         state = State.MOVE;
     }
 
     private void moveStep() {
-        if (--moveCountdown > 0) {
-            return;
+        if (tickMove(moveTo)) {
+            applyHazards(pos, moveTo);
+            if (hp <= 0) {
+                die();
+                return;
+            }
+            pos = moveTo;
+            wp++;
+            state = State.PATH;
+        } else if (moveStuck()) {
+            // No progress (collision / can't reach) - give up this ore and re-pick.
+            remaining.remove(target);
+            state = State.IDLE;
         }
-        applyHazards(pos, moveTo);
-        if (hp <= 0) {
-            die();
-            return;
-        }
-        pos = moveTo;
-        moveBody(pos);
-        wp++;
-        state = State.PATH;
     }
 
     private void startMining() {

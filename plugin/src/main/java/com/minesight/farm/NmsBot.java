@@ -34,7 +34,15 @@ import java.util.UUID;
  */
 public final class NmsBot extends BotEpisode {
 
+    // Default: drive the player with real movement impulses (server physics).
+    // -Dminesight.nmsMove=scripted falls back to teleport-along-path (verified).
+    private static final boolean PHYSICS =
+            !"scripted".equalsIgnoreCase(System.getProperty("minesight.nmsMove", "physics"));
+
     private ServerPlayer player;
+    private double lastX, lastZ;
+    private int stuckTicks;
+    private boolean stuck;
 
     public NmsBot(JavaPlugin plugin, ArenaManager.Arena arena, BotParams params, int budget) {
         super(plugin, arena, params, budget);
@@ -64,6 +72,71 @@ public final class NmsBot extends BotEpisode {
     protected void moveBody(BotPos to) {
         if (player != null) {
             player.setPos(to.x() + 0.5, to.y(), to.z() + 0.5);
+        }
+    }
+
+    @Override
+    protected void startMove(BotPos target) {
+        stuck = false;
+        stuckTicks = 0;
+        if (player != null) {
+            lastX = player.getX();
+            lastZ = player.getZ();
+        }
+    }
+
+    @Override
+    protected boolean tickMove(BotPos target) {
+        if (player == null) {
+            return true;
+        }
+        if (!PHYSICS) {
+            moveBody(target);     // scripted teleport (verified-working fallback)
+            return true;
+        }
+        // Real movement: face the waypoint, hold forward, jump to step up - and
+        // let the server's player physics carry the body (collision, gravity).
+        double px = player.getX(), py = player.getY(), pz = player.getZ();
+        double dx = target.x() + 0.5 - px;
+        double dz = target.z() + 0.5 - pz;
+        double horiz = Math.sqrt(dx * dx + dz * dz);
+        if (horiz < params.waypointRadius && Math.abs(py - target.y()) < 1.2) {
+            stopInputs();
+            return true;
+        }
+        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        player.setYRot(yaw);
+        player.setYHeadRot(yaw);
+        player.setXRot(0.0f);
+        player.zza = 1.0f;                                   // forward impulse
+        player.setSprinting(pos.dist(goal) > params.sprintDist);
+        boolean stepUp = target.y() > Math.floor(py) + 0.01;
+        player.setJumping(stepUp || player.horizontalCollision);
+        // Stuck detection - the movement-feel knobs the sim/zombie can't tune.
+        if (++stuckTicks >= params.stuckWindow) {
+            double moved = Math.hypot(px - lastX, pz - lastZ);
+            lastX = px;
+            lastZ = pz;
+            stuckTicks = 0;
+            if (moved < params.stuckMinMove) {
+                stopInputs();
+                stuck = true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    protected boolean moveStuck() {
+        return stuck;
+    }
+
+    private void stopInputs() {
+        if (player != null) {
+            player.zza = 0.0f;
+            player.xxa = 0.0f;
+            player.setJumping(false);
+            player.setSprinting(false);
         }
     }
 
