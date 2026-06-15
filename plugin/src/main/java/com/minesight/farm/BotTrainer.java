@@ -41,7 +41,7 @@ public final class BotTrainer {
     private int lastGen = -1;
     private final Set<String> claimed = new HashSet<>();
     private final List<ScheduledTask> tasks = new ArrayList<>();
-    private final List<MiningBot> bots = new ArrayList<>();
+    private final List<BotEpisode> bots = new ArrayList<>();
 
     public BotTrainer(MineSightFarmPlugin plugin, ArenaManager arenas) {
         this.plugin = plugin;
@@ -84,7 +84,7 @@ public final class BotTrainer {
             t.cancel();
         }
         tasks.clear();
-        for (MiningBot b : bots) {
+        for (BotEpisode b : bots) {
             b.cleanup();
         }
         bots.clear();
@@ -92,8 +92,16 @@ public final class BotTrainer {
     }
 
     /** Run a single watchable episode in one arena (for {@code /msf bot}). */
-    public void runDemo(int arenaId, BotParams params, Consumer<MiningBot.Result> onResult) {
+    public void runDemo(int arenaId, BotParams params, Consumer<BotEpisode.Result> onResult) {
         runEpisode(arenaId, params, "MineBot demo", onResult);
+    }
+
+    /** Bot body: real NMS ServerPlayer by default, Zombie via -Dminesight.bot=zombie. */
+    private BotEpisode makeBot(ArenaManager.Arena arena, BotParams params) {
+        if ("zombie".equalsIgnoreCase(System.getProperty("minesight.bot", "nms"))) {
+            return new ZombieBot(plugin, arena, params, budget);
+        }
+        return new NmsBot(plugin, arena, params, budget);
     }
 
     /** Whether a tuned best.json export exists to run with (vs. defaults). */
@@ -140,24 +148,33 @@ public final class BotTrainer {
     }
 
     private void runEpisode(int arenaId, BotParams params, String name,
-                            Consumer<MiningBot.Result> onResult) {
+                            Consumer<BotEpisode.Result> onResult) {
         ArenaManager.Arena arena = arenas.arena(arenaId);
         World w = arena.spawn().getWorld();
         int cx = (arena.ox + ArenaManager.W / 2) >> 4;
         int cz = (arena.oz + ArenaManager.D / 2) >> 4;
         arenas.stamp(arena, () -> {
-            MiningBot bot = new MiningBot(plugin, arena, params, budget);
-            bot.spawn(name);
-            bots.add(bot);
+            BotEpisode bot = makeBot(arena, params);
+            try {
+                bot.spawn(name);
+            } catch (Throwable ex) {
+                // NMS lifecycle is finicky - fall back to the API-safe zombie body.
+                plugin.getLogger().warning("Bot spawn failed (" + ex + "); falling back to zombie.");
+                bot.cleanup();
+                bot = new ZombieBot(plugin, arena, params, budget);
+                bot.spawn(name);
+            }
+            final BotEpisode runBot = bot;
+            bots.add(runBot);
             ScheduledTask task = plugin.getServer().getRegionScheduler().runAtFixedRate(
                     plugin, w, cx, cz, t -> {
-                        bot.tick();
-                        if (bot.isDone()) {
+                        runBot.tick();
+                        if (runBot.isDone()) {
                             t.cancel();
                             tasks.remove(t);
-                            MiningBot.Result r = bot.result();
-                            bot.cleanup();
-                            bots.remove(bot);
+                            BotEpisode.Result r = runBot.result();
+                            runBot.cleanup();
+                            bots.remove(runBot);
                             onResult.accept(r);
                         }
                     }, 1L, 1L);
@@ -221,7 +238,7 @@ public final class BotTrainer {
         return ids;
     }
 
-    private void writeTell(String id, MiningBot.Result r) {
+    private void writeTell(String id, BotEpisode.Result r) {
         JsonObject o = new JsonObject();
         o.addProperty("id", id);
         o.addProperty("fitness", r.fitness());
