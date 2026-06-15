@@ -10,6 +10,7 @@ import com.minesight.client.detect.OverlayRenderer;
 import com.minesight.client.detect.RadarRenderer;
 import com.minesight.client.detect.WorldHighlightRenderer;
 import com.minesight.client.detect.WorldMarkerRenderer;
+import com.minesight.client.nav.AgentParams;
 import com.minesight.client.nav.MiningAgent;
 import com.minesight.client.nav.Navigator;
 import com.minesight.client.nav.TrainingHarness;
@@ -57,6 +58,7 @@ public class MineSightClient implements ClientModInitializer {
     private Navigator navigator;
     private MiningAgent agent;
     private TrainingHarness trainer;
+    private AgentParams agentParams;
     private KeyBinding overlayKey;
     private KeyBinding reviewKey;
     private KeyBinding radarKey;
@@ -82,8 +84,11 @@ public class MineSightClient implements ClientModInitializer {
         WorldHighlightRenderer highlights = new WorldHighlightRenderer(mc, memory);
         WorldMarkerRenderer markers = new WorldMarkerRenderer(mc, memory);
         RadarRenderer radar = new RadarRenderer(mc, memory);
-        navigator = new Navigator(mc, memory);
-        agent = new MiningAgent(mc, memory);
+        // Shared, hot-reloadable tuning: starts from the auto-tuner's exported
+        // best.json (if any), so F4/F6 play with the trained params.
+        agentParams = AgentParams.load();
+        navigator = new Navigator(mc, memory, agentParams);
+        agent = new MiningAgent(mc, memory, agentParams);
         trainer = new TrainingHarness(mc);
         // 3D ore boxes + nav/agent routes in world space; 2D boxes + labels + radar on the HUD.
         WorldRenderEvents.AFTER_ENTITIES.register(highlights::render);
@@ -168,8 +173,11 @@ public class MineSightClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(FarmPayload.ID,
                 (payload, context) -> context.client().execute(() -> handle(payload.data())));
 
-        // Greet the plugin on join; it should reply with a pong.
+        // Greet the plugin on join; it should reply with a pong. Also reload the
+        // tuned agent params so a fresh best.json from training takes effect.
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+            agentParams.copyFrom(AgentParams.load());
+            LOG.info("Agent params: {}", AgentParams.hasExport() ? "loaded tuned best.json" : "defaults");
             if (ClientPlayNetworking.canSend(FarmPayload.ID)) {
                 ClientPlayNetworking.send(new FarmPayload(FarmProtocol.hello("fabric-client")));
                 LOG.info("Sent hello to MineSightFarm");

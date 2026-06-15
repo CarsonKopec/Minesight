@@ -10,6 +10,7 @@ converge against a synthetic fitness without the game).
 """
 from .cmaes import CMAES
 from .genome import PARAMS, NAMES, DIM, decode, default_normalized
+from .sim import evaluate, generate_arena
 from .trainer import Trainer, Best, default_run_dir
 
 __all__ = [
@@ -22,4 +23,6 @@ __all__ = [
     "decode",
     "default_normalized",
     "default_run_dir",
+    "evaluate",
+    "generate_arena",
 ]

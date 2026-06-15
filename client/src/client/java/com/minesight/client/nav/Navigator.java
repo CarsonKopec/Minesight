@@ -37,10 +37,14 @@ public final class Navigator {
     private float lastHealth = -1.0f;
 
     public Navigator(MinecraftClient mc, OreMemory memory) {
+        this(mc, memory, AgentParams.defaults());
+    }
+
+    public Navigator(MinecraftClient mc, OreMemory memory, AgentParams params) {
         this.mc = mc;
         this.memory = memory;
-        this.finder = new PathFinder(mc);
-        this.walker = new AutoWalker(mc);
+        this.finder = new PathFinder(mc, params);
+        this.walker = new AutoWalker(mc, params);
         this.renderer = new PathRenderer(mc);
     }
 

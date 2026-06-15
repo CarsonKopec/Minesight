@@ -136,6 +136,7 @@ class Trainer:
         self.es.tell(u, costs)
         self._pending_u = None
         self._pending_ids = []
+        self._write_best()
         return {
             "gen": self.es.generation,
             "best": self.best.fitness,
@@ -169,6 +170,27 @@ class Trainer:
             if self.es.converged():
                 break
         return self.best
+
+    def run_sim(
+        self,
+        max_gens: int,
+        *,
+        seeds: tuple[int, ...] = (0, 1, 2, 3),
+        episode_ticks: int = 3600,
+        log_every: int = 0,
+    ) -> Best:
+        """Optimize against the headless voxel simulator - no Minecraft.
+
+        Each candidate is scored as the mean fitness over several arena
+        ``seeds`` (different layouts) so the genome generalizes instead of
+        overfitting one arena. Fast enough to run thousands of episodes inline.
+        """
+        from .sim import evaluate
+
+        def fitness(values: dict[str, float]) -> float:
+            return float(np.mean([evaluate(values, s, episode_ticks)["fitness"] for s in seeds]))
+
+        return self.run_simulated(fitness, max_gens, log_every=log_every)
 
     def run(
         self,
@@ -241,6 +263,13 @@ class Trainer:
         self._pending_ids = state.get("pending_ids", [])
         pu = state.get("pending_u")
         self._pending_u = np.asarray(pu, dtype=float) if pu is not None else None
+
+    def _write_best(self) -> None:
+        """Export the best genome as a flat {name: value} map the Fabric client
+        loads to play with tuned params (``best.json`` in the run dir)."""
+        if not self.best.values:
+            return
+        _atomic_write_json(self.dir / "best.json", self.best.values)
 
     def _write_status(self, *, waiting: int, info: dict | None = None) -> None:
         status = {

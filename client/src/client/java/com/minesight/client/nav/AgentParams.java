@@ -1,6 +1,12 @@
 package com.minesight.client.nav;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 /**
  * The tunable surface of the autonomous miner - the knobs the CMA-ES auto-tuner
@@ -63,6 +69,69 @@ public final class AgentParams {
         p.reachDist = clamp(num(v, "reach_dist", p.reachDist), 3.0, 6.0);
         p.rareWeight = clamp(num(v, "rare_weight", p.rareWeight), 1.0, 8.0);
         return p;
+    }
+
+    /**
+     * Load the tuned genome the auto-tuner exported (``best.json`` in the run
+     * dir, override {@code -Dminesight.agentParams} / {@code $MINESIGHT_AGENT_PARAMS}).
+     * Falls back to defaults if there's no export yet. Accepts either a flat
+     * {@code {name: value}} map or a {@code {"values": {...}}} wrapper.
+     */
+    public static AgentParams load() {
+        Path path = paramsPath();
+        if (path == null || !Files.exists(path)) {
+            return defaults();
+        }
+        try {
+            String text = Files.readString(path, StandardCharsets.UTF_8);
+            JsonObject o = JsonParser.parseString(text).getAsJsonObject();
+            JsonObject values = o.has("values") && o.get("values").isJsonObject()
+                    ? o.getAsJsonObject("values") : o;
+            return fromJson(values);
+        } catch (Exception e) {
+            return defaults();
+        }
+    }
+
+    /** True if a tuned export exists to load (vs. falling back to defaults). */
+    public static boolean hasExport() {
+        Path path = paramsPath();
+        return path != null && Files.exists(path);
+    }
+
+    /** Copy every field from another params object (in-place hot-reload). */
+    public void copyFrom(AgentParams o) {
+        mineCost = o.mineCost;
+        placeCost = o.placeCost;
+        lavaNearCost = o.lavaNearCost;
+        maxDrop = o.maxDrop;
+        waypointRadius = o.waypointRadius;
+        stuckWindow = o.stuckWindow;
+        stuckMinMove = o.stuckMinMove;
+        sprintDist = o.sprintDist;
+        exploreStep = o.exploreStep;
+        mineTimeout = o.mineTimeout;
+        repath = o.repath;
+        reachDist = o.reachDist;
+        rareWeight = o.rareWeight;
+    }
+
+    private static Path paramsPath() {
+        String override = System.getProperty("minesight.agentParams");
+        if (override == null) {
+            override = System.getenv("MINESIGHT_AGENT_PARAMS");
+        }
+        if (override != null && !override.isBlank()) {
+            return Paths.get(override);
+        }
+        String dir = System.getProperty("minesight.trainDir");
+        if (dir == null) {
+            dir = System.getenv("MINESIGHT_TRAIN_DIR");
+        }
+        Path base = dir != null && !dir.isBlank()
+                ? Paths.get(dir)
+                : Paths.get(System.getProperty("user.home"), ".minesight", "train");
+        return base.resolve("best.json");
     }
 
     private static double num(JsonObject v, String key, double fallback) {

@@ -46,6 +46,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--timeout", type=float, default=3600.0, help="per-episode wait, seconds")
     p.add_argument("--no-resume", action="store_true", help="ignore any existing checkpoint")
     p.add_argument("--simulate", action="store_true", help="optimize a synthetic fitness, no game")
+    p.add_argument("--sim", action="store_true",
+                   help="optimize against the headless voxel sim (block IDs, no Minecraft)")
+    p.add_argument("--sim-seeds", type=int, default=4, help="arenas averaged per candidate (--sim)")
     p.add_argument("--show", action="store_true", help="print current best params and exit")
     p.add_argument("--reset", action="store_true", help="delete run-dir files and exit")
     a = p.parse_args(argv)
@@ -76,6 +79,24 @@ def main(argv: list[str] | None = None) -> int:
         print("\n-- simulated optimum --")
         print("best fitness:", round(best.fitness, 3))
         print("recovered params:", json.dumps(best.values, indent=2))
+        return 0
+
+    if a.sim:
+        from .sim import evaluate
+        seeds = tuple(range(a.sim_seeds))
+        base = genome.decode(genome.default_normalized())
+        base_fit = sum(evaluate(base, s)["fitness"] for s in seeds) / len(seeds)
+        print(f"defaults baseline: {base_fit:.2f} (mean over {len(seeds)} arenas)")
+        best = t.run_sim(a.gens, seeds=seeds, log_every=max(1, a.gens // 20))
+        print("\n-- tuned params (voxel sim) --")
+        print(f"best fitness: {best.fitness:.2f}  (vs defaults {base_fit:.2f})")
+        print(json.dumps(best.values, indent=2))
+        per = [evaluate(best.values, s) for s in seeds]
+        cleared = sum(1 for r in per if r["cleared"])
+        print(f"arenas cleared: {cleared}/{len(seeds)}; "
+              f"avg ore {sum(r['ores'] for r in per) / len(seeds):.1f}, "
+              f"deaths {sum(r['deaths'] for r in per) / len(seeds):.1f}")
+        t.save_checkpoint()
         return 0
 
     print(f"run dir: {t.dir}")
