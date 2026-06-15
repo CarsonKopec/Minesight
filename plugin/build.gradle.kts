@@ -6,6 +6,9 @@ plugins {
     // (they just run on the main thread there), so Paper is a faithful dev
     // server; a real Folia jar is only needed to exercise true regionization.
     id("xyz.jpenilla.run-paper") version "3.0.2"
+    // NMS access (Mojang-mapped server internals) for real ServerPlayer bots.
+    // Requires Gradle 9 (see gradle/wrapper/gradle-wrapper.properties).
+    id("io.papermc.paperweight.userdev") version "2.0.0-beta.21"
 }
 
 group = "com.minesight"
@@ -21,9 +24,9 @@ repositories {
 }
 
 dependencies {
-    // Paper API carries the Folia region-scheduler APIs; folia-supported is
-    // declared in paper-plugin.yml. compileOnly - provided by the server.
-    compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    // Full Mojang-mapped Paper server: the Bukkit/Paper API plus net.minecraft
+    // server internals (NMS). Replaces the old compileOnly paper-api.
+    paperweight.paperDevBundle("1.21.11-R0.1-SNAPSHOT")
 }
 
 tasks.withType<JavaCompile> {
