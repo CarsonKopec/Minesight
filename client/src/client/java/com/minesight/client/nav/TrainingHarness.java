@@ -1,13 +1,16 @@
 package com.minesight.client.nav;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.minesight.client.detect.OreMemory;
+import com.minesight.client.net.FarmPayload;
+import com.minesight.client.net.FarmProtocol;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.text.Text;
+import net.minecraft.util.math.BlockPos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,52 +25,61 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * In-game side of the CMA-ES auto-tuner (engine: {@code minesight.evolve}). Reads
- * candidate agent parameters from a shared run dir, runs a fixed-length mining
- * episode with each, scores it, and reports the fitness back - closing the
- * optimization loop.
+ * In-game side of the CMA-ES auto-tuner (engine: {@code minesight.evolve}), driven
+ * by the server's {@link com.minesight.farm.ArenaManager training arenas}.
  *
- * <p>Protocol (run dir default {@code ~/.minesight/train}, overridable with
- * {@code -Dminesight.trainDir} or {@code $MINESIGHT_TRAIN_DIR}):
- * <ul>
- *   <li>{@code ask.json} - the optimizer's current candidates; we pick any with
- *       no result yet and run it.</li>
- *   <li>{@code tell.jsonl} - we append one line per finished episode:
- *       {@code {"id","fitness","score","ores","deaths","ticks"}}.</li>
- * </ul>
+ * <p>Each episode: pull a candidate parameter set from {@code ask.json}, ask the
+ * plugin to reset a fresh arena and drop us in ({@code arena_request} ->
+ * {@code arena_ready}), seed a throwaway memory with the arena's ground-truth ore,
+ * run the autonomous agent with those params until <b>every ore is cleared</b> (a
+ * speed bonus rewards finishing fast) or the tick budget runs out, then report
+ * fitness to {@code tell.jsonl} and request the next arena.
  *
- * <p><b>Fitness</b> = rarity-weighted ore broken − death penalty, over a fixed
- * tick budget. Episodes currently run back-to-back in place (no world reset);
- * server-driven regen between episodes is a follow-up, so for now train on a
- * fresh, ore-rich area and accept some between-episode variance.
+ * <p>Ground-truth seeding means no vision pipeline is needed here - this trains the
+ * agent's <i>body</i> (pathfinding, mining, bridging, hazard avoidance), which is
+ * exactly what the genome tunes. With N farm clients each gets its own arena, so
+ * episodes run in parallel.
  *
- * <p>Single-player / own-server dev tool. Bind {@code key.minesight.train} in
- * Controls (unbound by default).
+ * <p>Run dir default {@code ~/.minesight/train} (override {@code -Dminesight.trainDir}
+ * / {@code $MINESIGHT_TRAIN_DIR}). Bind {@code key.minesight.train} in Controls.
  */
 public final class TrainingHarness {
 
     private static final Logger LOG = LoggerFactory.getLogger("minesight");
-    private static final int POLL_TICKS = 20;          // 1s between run-dir polls
+    private static final String CLIENT_ID = "fabric-train";
+    private static final int POLL_TICKS = 20;            // 1s between run-dir polls
+    private static final int ARENA_TIMEOUT = 200;        // give up waiting after 10s
     private static final double DEATH_PENALTY = 10.0;
+    private static final double SPEED_WEIGHT = 20.0;     // bonus for clearing early
+
+    private enum Phase {WAITING, AWAIT_ARENA, RUNNING}
 
     private final MinecraftClient mc;
-    private final OreMemory memory;
     private final Path dir;
     private final int episodeTicks;
+    // Throwaway memory we seed per episode; never load()ed so it never persists,
+    // keeping the player's real ore memory untouched.
+    private final OreMemory trainMemory = new OreMemory();
 
     private boolean training;
+    private Phase phase = Phase.WAITING;
     private int pollCooldown;
+    private int awaitTicks;
+
+    // Pending candidate (chosen, arena requested, not yet running).
+    private String pendingId;
+    private AgentParams pendingParams;
 
     // Active episode.
     private MiningAgent agent;
-    private String currentId;
+    private int arenaId;
+    private int seededCount;
     private int ticksLeft;
     private int deaths;
     private float prevHealth;
 
-    public TrainingHarness(MinecraftClient mc, OreMemory memory) {
+    public TrainingHarness(MinecraftClient mc) {
         this.mc = mc;
-        this.memory = memory;
         this.dir = resolveDir();
         this.episodeTicks = envInt("MINESIGHT_EPISODE_TICKS", 3600);  // ~3 min
     }
@@ -89,29 +101,58 @@ public final class TrainingHarness {
             return;
         }
         training = true;
+        phase = Phase.WAITING;
         pollCooldown = 0;
         msg("training on - run: python -m minesight.evolve (" + dir + ")");
     }
 
     public void stop() {
         training = false;
-        endEpisode(false);  // discard any half-finished episode
+        phase = Phase.WAITING;
+        if (agent != null) {
+            agent.stop();
+            agent = null;
+        }
+        pendingId = null;
     }
 
     public void tick() {
         if (!training || mc.player == null || mc.world == null) {
             return;
         }
-        if (agent != null) {
-            runEpisode(mc.player);
-        } else {
-            waitForWork();
+        switch (phase) {
+            case WAITING -> pollForCandidate();
+            case AWAIT_ARENA -> {
+                if (++awaitTicks > ARENA_TIMEOUT) {
+                    msg("arena request timed out - is the plugin running?");
+                    phase = Phase.WAITING;
+                    pollCooldown = POLL_TICKS;
+                }
+            }
+            case RUNNING -> runEpisode(mc.player);
         }
+    }
+
+    /** plugin -> client: arena reset + we're in it. Seed ground truth and run. */
+    public void onArenaReady(FarmProtocol.ArenaReady r) {
+        if (!training || phase != Phase.AWAIT_ARENA || pendingParams == null) {
+            return;
+        }
+        seedMemory(r);
+        arenaId = r.arenaId();
+        agent = new MiningAgent(mc, trainMemory, pendingParams);
+        agent.start();
+        ticksLeft = episodeTicks;
+        deaths = 0;
+        prevHealth = mc.player != null ? mc.player.getHealth() : 20.0f;
+        phase = Phase.RUNNING;
+        msg("episode " + pendingId + " in arena " + arenaId + " (" + seededCount + " ore)");
+        LOG.info("train: begin {} arena={} ore={}", pendingId, arenaId, seededCount);
     }
 
     // -- episode lifecycle -------------------------------------------------
 
-    private void waitForWork() {
+    private void pollForCandidate() {
         if (--pollCooldown > 0) {
             return;
         }
@@ -128,63 +169,93 @@ public final class TrainingHarness {
             if (answered.contains(id)) {
                 continue;
             }
-            beginEpisode(id, cand.getAsJsonObject("values"));
+            startCandidate(id, cand.getAsJsonObject("values"));
             return;
         }
         // All current candidates answered - idle until the next generation.
     }
 
-    private void beginEpisode(String id, JsonObject values) {
-        AgentParams params = AgentParams.fromJson(values);
-        agent = new MiningAgent(mc, memory, params);
-        agent.start();
-        currentId = id;
-        ticksLeft = episodeTicks;
-        deaths = 0;
-        prevHealth = mc.player.getHealth();
-        msg("episode " + id + " (" + episodeTicks + " ticks)");
-        LOG.info("train: begin {} params={}", id, values);
+    private void startCandidate(String id, JsonObject values) {
+        pendingId = id;
+        pendingParams = AgentParams.fromJson(values);
+        if (!sendToPlugin(FarmProtocol.arenaRequest(CLIENT_ID))) {
+            msg("training needs the arena server (no plugin channel)");
+            pendingId = null;
+            return;  // stay WAITING; retry next poll
+        }
+        phase = Phase.AWAIT_ARENA;
+        awaitTicks = 0;
+        LOG.info("train: requested arena for {}", id);
     }
 
     private void runEpisode(ClientPlayerEntity player) {
         float hp = player.getHealth();
         if (hp <= 0.0f && prevHealth > 0.0f) {
             deaths++;
-            endEpisode(true);   // death ends the episode early; fitness eats the penalty
+            endEpisode(false);     // death ends the episode; fitness eats the penalty
             return;
         }
         prevHealth = hp;
 
         agent.tick();
-        // The agent self-stops when boxed in or hurt; keep the episode going so it
-        // uses the full time budget (score carries over across re-starts).
+        // Keep the episode running its full budget even if the agent self-stops.
         if (!agent.isActive() && ticksLeft > 1) {
             agent.start();
         }
+        if (seededCount > 0 && agent.minedCount() >= seededCount) {
+            endEpisode(true);      // goal: all ground-truth ore cleared
+            return;
+        }
         if (--ticksLeft <= 0) {
-            endEpisode(true);
+            endEpisode(false);
         }
     }
 
-    private void endEpisode(boolean report) {
+    private void endEpisode(boolean goalMet) {
         if (agent == null) {
+            phase = Phase.WAITING;
             return;
         }
-        if (report && currentId != null) {
-            double fitness = agent.minedScore() - DEATH_PENALTY * deaths;
-            writeTell(currentId, fitness, agent.minedScore(), agent.minedCount(), deaths,
-                    episodeTicks - Math.max(ticksLeft, 0));
-            msg("episode " + currentId + " done: fitness " + String.format("%.1f", fitness));
+        if (pendingId != null) {
+            int used = episodeTicks - Math.max(ticksLeft, 0);
+            double speedBonus = goalMet ? SPEED_WEIGHT * (Math.max(ticksLeft, 0) / (double) episodeTicks) : 0.0;
+            double fitness = agent.minedScore() - DEATH_PENALTY * deaths + speedBonus;
+            writeTell(pendingId, fitness, agent.minedScore(), agent.minedCount(), deaths, used, goalMet);
+            sendToPlugin(FarmProtocol.episodeEnd(arenaId));
+            msg("episode " + pendingId + (goalMet ? " CLEARED" : " done") + ": fitness "
+                    + String.format("%.1f", fitness));
         }
         agent.stop();
         agent = null;
-        currentId = null;
-        pollCooldown = 0;  // grab the next candidate promptly
+        pendingId = null;
+        phase = Phase.WAITING;
+        pollCooldown = 0;          // grab the next candidate promptly
+    }
+
+    // -- memory seeding ----------------------------------------------------
+
+    private void seedMemory(FarmProtocol.ArenaReady r) {
+        for (OreMemory.Node n : trainMemory.snapshot()) {
+            trainMemory.forget(n.pos);
+        }
+        for (FarmProtocol.GroundTruthOre o : r.ores()) {
+            trainMemory.record(new BlockPos(o.x(), o.y(), o.z()), o.label(), 1.0f);
+        }
+        seededCount = r.ores().size();
+    }
+
+    // -- transport ---------------------------------------------------------
+
+    private boolean sendToPlugin(byte[] payload) {
+        if (!ClientPlayNetworking.canSend(FarmPayload.ID)) {
+            return false;
+        }
+        ClientPlayNetworking.send(new FarmPayload(payload));
+        return true;
     }
 
     // -- run-dir IO --------------------------------------------------------
 
-    /** Ids that already have a result line in tell.jsonl. */
     private Set<String> answeredIds() {
         Set<String> ids = new HashSet<>();
         Path tell = dir.resolve("tell.jsonl");
@@ -213,7 +284,8 @@ public final class TrainingHarness {
         return ids;
     }
 
-    private void writeTell(String id, double fitness, double score, int ores, int deaths, int ticks) {
+    private void writeTell(String id, double fitness, double score, int ores, int deaths,
+                           int ticks, boolean goal) {
         JsonObject o = new JsonObject();
         o.addProperty("id", id);
         o.addProperty("fitness", fitness);
@@ -221,6 +293,8 @@ public final class TrainingHarness {
         o.addProperty("ores", ores);
         o.addProperty("deaths", deaths);
         o.addProperty("ticks", ticks);
+        o.addProperty("goal", goal);
+        o.addProperty("arena", arenaId);
         try {
             Files.writeString(dir.resolve("tell.jsonl"), o + "\n", StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);

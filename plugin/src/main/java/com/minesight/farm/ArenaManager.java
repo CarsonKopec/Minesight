@@ -1,0 +1,424 @@
+package com.minesight.farm;
+
+import org.bukkit.GameMode;
+import org.bukkit.GameRule;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.WorldCreator;
+import org.bukkit.WorldType;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.java.JavaPlugin;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/**
+ * Training-arena rig for the autonomous-miner auto-tuner.
+ *
+ * <p>Creates a dedicated void world ({@code minesight_arena}) tiled into a grid of
+ * identical, self-contained mining arenas. Each arena is a bedrock-shelled box of
+ * stone laced with a <b>deterministic</b> layout - corridors, scattered
+ * ground-truth ore, lava pockets, a water gap to bridge, and a drop shaft - so
+ * every candidate trains on the exact same challenge (fitness is a fair A/B).
+ *
+ * <p>The layout is generated once from a per-arena seed into an in-memory
+ * {@code Material[]}, then stamped to the world; a reset just re-stamps it, wiping
+ * everything the agent dug/placed. Ground-truth ore positions are handed to the
+ * client so it can seed its memory directly - no vision pipeline needed to train
+ * the agent's body (pathfinding / mining / bridging / hazard avoidance).
+ *
+ * <p>Folia-correct: world edits run on the region scheduler for each chunk; on a
+ * Paper dev server those all serialize on the main thread.
+ */
+public final class ArenaManager {
+
+    public static final String WORLD = "minesight_arena";
+
+    // Arena box including the 1-block bedrock shell.
+    static final int W = 32, H = 18, D = 32;
+    static final int FLOOR_Y = 60;          // world Y of the arena's bedrock floor
+    static final int SPACING = 48;          // gap between arena origins (> W, so no overlap)
+    static final int GRID = 6;              // GRID x GRID = up to 36 arenas
+    static final long SEED_BASE = 0x6D696E65L;  // "mine"
+
+    private static final int ORE_COUNT = 14;
+    private static final int CORRIDOR_FLOOR = 2;     // local Y of the corridor floor
+
+    /** A ground-truth ore block: world coords + dataset label. */
+    public record GroundTruthOre(String label, int x, int y, int z) {
+    }
+
+    /** One training arena: a fixed box with a deterministic layout. */
+    public static final class Arena {
+        final int id;
+        final int ox, oy, oz;                 // world corner (min) of the box
+        final Material[] layout;              // W*H*D, generated once
+        final List<GroundTruthOre> ores;
+        final Location spawn;
+        UUID client;                          // sticky assignment
+
+        Arena(int id, int ox, int oy, int oz, Material[] layout,
+              List<GroundTruthOre> ores, Location spawn) {
+            this.id = id;
+            this.ox = ox;
+            this.oy = oy;
+            this.oz = oz;
+            this.layout = layout;
+            this.ores = ores;
+            this.spawn = spawn;
+        }
+
+        public int id() {
+            return id;
+        }
+
+        public Location spawn() {
+            return spawn.clone();
+        }
+
+        public List<GroundTruthOre> ores() {
+            return ores;
+        }
+    }
+
+    private final JavaPlugin plugin;
+    private final Map<Integer, Arena> arenas = new HashMap<>();
+    private final Map<UUID, Integer> assignment = new HashMap<>();
+    private final Map<Material, BlockData> blockCache = new EnumMap<>(Material.class);
+    private World world;
+
+    public ArenaManager(JavaPlugin plugin) {
+        this.plugin = plugin;
+    }
+
+    /** Create (or adopt) the arena world. Call from onEnable (main thread). */
+    public void init() {
+        world = plugin.getServer().getWorld(WORLD);
+        if (world == null) {
+            WorldCreator wc = new WorldCreator(WORLD);
+            wc.type(WorldType.FLAT);
+            wc.generatorSettings("{\"layers\":[],\"biome\":\"minecraft:the_void\"}");
+            wc.generateStructures(false);
+            world = wc.createWorld();
+        }
+        if (world == null) {
+            plugin.getLogger().warning("Arena world could not be created; training disabled.");
+            return;
+        }
+        // Static, predictable arenas: no daylight/weather/mobs/fire spread/random ticks.
+        world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
+        world.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
+        world.setGameRule(GameRule.DO_MOB_SPAWNING, false);
+        world.setGameRule(GameRule.DO_FIRE_TICK, false);
+        world.setGameRule(GameRule.RANDOM_TICK_SPEED, 0);
+        world.setGameRule(GameRule.FALL_DAMAGE, true);   // falling IS a hazard to learn
+        world.setTime(6000);
+        plugin.getLogger().info("Arena world '" + WORLD + "' ready (" + GRID * GRID + " slots).");
+    }
+
+    public boolean ready() {
+        return world != null;
+    }
+
+    /** The arena assigned to a client (sticky), allocating one on first request. */
+    public synchronized Arena assign(UUID client) {
+        Integer id = assignment.get(client);
+        if (id == null) {
+            id = assignment.size() % (GRID * GRID);
+            assignment.put(client, id);
+        }
+        return arena(id);
+    }
+
+    /** Get (lazily generating) the arena with this id. */
+    public synchronized Arena arena(int id) {
+        return arenas.computeIfAbsent(id, this::generate);
+    }
+
+    public int assignedId(UUID client) {
+        Integer id = assignment.get(client);
+        return id != null ? id : -1;
+    }
+
+    // -- generation (pure: no world access) --------------------------------
+
+    private Arena generate(int id) {
+        int col = id % GRID;
+        int row = id / GRID;
+        int ox = col * SPACING;
+        int oz = row * SPACING;
+        int oy = FLOOR_Y;
+        Material[] layout = new Material[W * H * D];
+        List<GroundTruthOre> ores = new ArrayList<>();
+        Random r = new Random(SEED_BASE + id);
+
+        // 1. Solid stone fill inside a bedrock shell.
+        for (int lx = 0; lx < W; lx++) {
+            for (int ly = 0; ly < H; ly++) {
+                for (int lz = 0; lz < D; lz++) {
+                    boolean shell = lx == 0 || lx == W - 1 || lz == 0 || lz == D - 1
+                            || ly == 0 || ly == H - 1;
+                    layout[idx(lx, ly, lz)] = shell ? Material.BEDROCK : Material.STONE;
+                }
+            }
+        }
+
+        // 2. A main corridor down the middle (X), plus a few branches (Z) - open
+        //    air the agent walks, with stone walls to dig into for ore.
+        int midZ = D / 2;
+        carveCorridorX(layout, 1, W - 2, midZ);
+        for (int bx : new int[]{W / 4, W / 2, 3 * W / 4}) {
+            carveCorridorZ(layout, bx, 1, D - 2);
+        }
+
+        // 3. Hazards on the corridor floor: lava pockets to route around.
+        for (int i = 0; i < 3; i++) {
+            int lx = 4 + r.nextInt(W - 8);
+            set(layout, lx, CORRIDOR_FLOOR, midZ, Material.LAVA);
+        }
+
+        // 4. A water gap across the corridor: drop the floor a few blocks and fill
+        //    the bottom with water - the agent must bridge it.
+        int gapX = W / 2 + 3;
+        for (int dz = -1; dz <= 0; dz++) {
+            int z = midZ + dz;
+            set(layout, gapX, CORRIDOR_FLOOR, z, Material.AIR);
+            set(layout, gapX, CORRIDOR_FLOOR - 1, z, Material.WATER);
+            set(layout, gapX, CORRIDOR_FLOOR - 2, z, Material.WATER);
+        }
+
+        // 5. A drop shaft on a branch with an ore at the bottom (depth: dig-down + climb).
+        int shaftX = W / 4;
+        for (int dy = 0; dy < 4; dy++) {
+            set(layout, shaftX, CORRIDOR_FLOOR - dy, 3, Material.AIR);
+            set(layout, shaftX, CORRIDOR_FLOOR + 1 - dy, 3, Material.AIR);
+        }
+        placeOre(layout, ores, ox, oy, oz, shaftX, CORRIDOR_FLOOR - 3, 2, "diamond_ore");
+
+        // 6. Scatter ground-truth ore in stone cells reachable from the carved air.
+        scatterOres(layout, ores, ox, oy, oz, r);
+
+        // 7. Spawn: stand at the start of the main corridor.
+        Location spawn = new Location(world, ox + 2 + 0.5, oy + CORRIDOR_FLOOR + 1,
+                oz + midZ + 0.5, 90f, 0f);
+        ensureStand(layout, 2, midZ);
+
+        plugin.getLogger().info("Generated arena " + id + " at " + ox + "," + oy + "," + oz
+                + " with " + ores.size() + " ground-truth ore.");
+        return new Arena(id, ox, oy, oz, layout, ores, spawn);
+    }
+
+    private void carveCorridorX(Material[] layout, int x0, int x1, int z) {
+        for (int x = x0; x <= x1; x++) {
+            for (int dz = -1; dz <= 0; dz++) {
+                set(layout, x, CORRIDOR_FLOOR + 1, z + dz, Material.AIR);
+                set(layout, x, CORRIDOR_FLOOR + 2, z + dz, Material.AIR);
+                if (get(layout, x, CORRIDOR_FLOOR, z + dz) == Material.STONE) {
+                    set(layout, x, CORRIDOR_FLOOR, z + dz, Material.STONE);  // keep floor solid
+                }
+            }
+        }
+    }
+
+    private void carveCorridorZ(Material[] layout, int x, int z0, int z1) {
+        for (int z = z0; z <= z1; z++) {
+            set(layout, x, CORRIDOR_FLOOR + 1, z, Material.AIR);
+            set(layout, x, CORRIDOR_FLOOR + 2, z, Material.AIR);
+        }
+    }
+
+    /** Ensure a standable air pocket with solid floor at this column. */
+    private void ensureStand(Material[] layout, int lx, int lz) {
+        set(layout, lx, CORRIDOR_FLOOR, lz, Material.STONE);
+        set(layout, lx, CORRIDOR_FLOOR + 1, lz, Material.AIR);
+        set(layout, lx, CORRIDOR_FLOOR + 2, lz, Material.AIR);
+    }
+
+    /** Place ores in stone cells that sit within 2 blocks of carved air (so the
+     *  agent can always dig to them). Labels weighted toward common ore. */
+    private void scatterOres(Material[] layout, List<GroundTruthOre> ores,
+                             int ox, int oy, int oz, Random r) {
+        List<int[]> candidates = new ArrayList<>();
+        for (int lx = 2; lx < W - 2; lx++) {
+            for (int ly = 1; ly < H - 1; ly++) {
+                for (int lz = 2; lz < D - 2; lz++) {
+                    if (get(layout, lx, ly, lz) == Material.STONE && nearAir(layout, lx, ly, lz)) {
+                        candidates.add(new int[]{lx, ly, lz});
+                    }
+                }
+            }
+        }
+        Collections.shuffle(candidates, r);
+        int n = Math.min(ORE_COUNT, candidates.size());
+        for (int i = 0; i < n; i++) {
+            int[] c = candidates.get(i);
+            placeOre(layout, ores, ox, oy, oz, c[0], c[1], c[2], rollOre(r));
+        }
+    }
+
+    /** Weighted ore label: mostly common, occasionally rare. */
+    private static String rollOre(Random r) {
+        int k = r.nextInt(100);
+        if (k < 40) return "coal_ore";
+        if (k < 65) return "iron_ore";
+        if (k < 80) return "copper_ore";
+        if (k < 88) return "redstone_ore";
+        if (k < 94) return "gold_ore";
+        if (k < 98) return "lapis_ore";
+        return r.nextBoolean() ? "diamond_ore" : "emerald_ore";
+    }
+
+    private void placeOre(Material[] layout, List<GroundTruthOre> ores, int ox, int oy, int oz,
+                          int lx, int ly, int lz, String label) {
+        Material mat = oreMaterial(label);
+        set(layout, lx, ly, lz, mat);
+        ores.add(new GroundTruthOre(label, ox + lx, oy + ly, oz + lz));
+    }
+
+    private static Material oreMaterial(String label) {
+        return switch (label) {
+            case "coal_ore" -> Material.COAL_ORE;
+            case "iron_ore" -> Material.IRON_ORE;
+            case "copper_ore" -> Material.COPPER_ORE;
+            case "gold_ore" -> Material.GOLD_ORE;
+            case "redstone_ore" -> Material.REDSTONE_ORE;
+            case "lapis_ore" -> Material.LAPIS_ORE;
+            case "emerald_ore" -> Material.EMERALD_ORE;
+            case "diamond_ore" -> Material.DIAMOND_ORE;
+            default -> Material.IRON_ORE;
+        };
+    }
+
+    private boolean nearAir(Material[] layout, int lx, int ly, int lz) {
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -2; dy <= 2; dy++) {
+                for (int dz = -2; dz <= 2; dz++) {
+                    if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 2) {
+                        continue;
+                    }
+                    if (get(layout, lx + dx, ly + dy, lz + dz) == Material.AIR) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    // -- world stamping (reset) --------------------------------------------
+
+    /** (Re)stamp an arena's layout into the world, then run {@code done}. Wipes
+     *  everything the agent changed. Runs per-chunk on the region scheduler. */
+    public void stamp(Arena a, Runnable done) {
+        if (world == null) {
+            if (done != null) {
+                done.run();
+            }
+            return;
+        }
+        int cx0 = a.ox >> 4, cx1 = (a.ox + W - 1) >> 4;
+        int cz0 = a.oz >> 4, cz1 = (a.oz + D - 1) >> 4;
+        AtomicInteger pending = new AtomicInteger((cx1 - cx0 + 1) * (cz1 - cz0 + 1));
+        for (int cx = cx0; cx <= cx1; cx++) {
+            for (int cz = cz0; cz <= cz1; cz++) {
+                final int fcx = cx, fcz = cz;
+                plugin.getServer().getRegionScheduler().execute(plugin, world, fcx, fcz, () -> {
+                    stampChunk(a, fcx, fcz);
+                    if (pending.decrementAndGet() == 0 && done != null) {
+                        done.run();
+                    }
+                });
+            }
+        }
+    }
+
+    private void stampChunk(Arena a, int cx, int cz) {
+        int minWx = cx << 4, maxWx = minWx + 15;
+        int minWz = cz << 4, maxWz = minWz + 15;
+        for (int lx = 0; lx < W; lx++) {
+            int wx = a.ox + lx;
+            if (wx < minWx || wx > maxWx) {
+                continue;
+            }
+            for (int lz = 0; lz < D; lz++) {
+                int wz = a.oz + lz;
+                if (wz < minWz || wz > maxWz) {
+                    continue;
+                }
+                for (int ly = 0; ly < H; ly++) {
+                    Material mat = a.layout[idx(lx, ly, lz)];
+                    world.getBlockAt(wx, a.oy + ly, wz).setBlockData(blockData(mat), false);
+                }
+            }
+        }
+    }
+
+    private BlockData blockData(Material mat) {
+        return blockCache.computeIfAbsent(mat, Material::createBlockData);
+    }
+
+    // -- agent kit + teleport ----------------------------------------------
+
+    /** Drop a kitted agent into the arena spawn (on its region thread), then run
+     *  {@code onArrived} once the teleport completes. */
+    public void enter(Player p, Arena a, Runnable onArrived) {
+        p.getScheduler().run(plugin, t -> {
+            p.setGameMode(GameMode.SURVIVAL);
+            p.getInventory().clear();
+            p.getInventory().addItem(new ItemStack(Material.NETHERITE_PICKAXE));
+            p.getInventory().addItem(new ItemStack(Material.COBBLESTONE, 64));
+            p.setHealth(Math.min(20.0, p.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getValue()));
+            p.setFoodLevel(20);
+            p.setSaturation(20f);
+            p.setFireTicks(0);
+            p.teleportAsync(a.spawn).thenRun(() -> {
+                if (onArrived != null) {
+                    onArrived.run();
+                }
+            });
+        }, null);
+    }
+
+    /** Spectator helper: drop a watcher above an arena in spectator mode. */
+    public void spectate(Player p, int id) {
+        Arena a = arena(id);
+        Location view = new Location(world, a.ox + W / 2.0, a.oy + H + 6.0, a.oz + D / 2.0, 90f, 60f);
+        p.getScheduler().run(plugin, t -> {
+            p.setGameMode(GameMode.SPECTATOR);
+            p.teleportAsync(view);
+        }, null);
+    }
+
+    public int slotCount() {
+        return GRID * GRID;
+    }
+
+    // -- local-coord helpers -----------------------------------------------
+
+    private static int idx(int lx, int ly, int lz) {
+        return (ly * D + lz) * W + lx;
+    }
+
+    private static void set(Material[] layout, int lx, int ly, int lz, Material mat) {
+        if (lx >= 0 && lx < W && ly >= 0 && ly < H && lz >= 0 && lz < D) {
+            layout[idx(lx, ly, lz)] = mat;
+        }
+    }
+
+    private static Material get(Material[] layout, int lx, int ly, int lz) {
+        if (lx < 0 || lx >= W || ly < 0 || ly >= H || lz < 0 || lz >= D) {
+            return Material.BEDROCK;
+        }
+        return layout[idx(lx, ly, lz)];
+    }
+}

@@ -48,6 +48,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
     private volatile CaptureSession session;
     private VisitedStore visited;
     private GuiLink guiLink;
+    private ArenaManager arenas;
     private int heartbeat;
 
     @Override
@@ -58,6 +59,8 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         locator = new FoliaOreLocator(this);
         visited = new VisitedStore(this);
         guiLink = new GuiLink(this);
+        arenas = new ArenaManager(this);
+        arenas.init();
 
         // Paper plugins don't support YAML command declarations; register the
         // command programmatically (callable from onEnable).
@@ -111,12 +114,14 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
     public void execute(@NotNull CommandSourceStack source, @NotNull String[] args) {
         CommandSender sender = source.getSender();
         if (args.length == 0) {
-            sender.sendMessage("Usage: /minesightfarm <scan <ore> [radius] | capture [count] | status | tp | stop>");
+            sender.sendMessage("Usage: /minesightfarm <scan <ore> [radius] | capture [count] | "
+                    + "arena <tp|reset|list> [n] | status | tp | stop>");
             return;
         }
         switch (args[0].toLowerCase()) {
             case "scan" -> cmdScan(sender, args);
             case "capture" -> cmdCapture(sender, args);
+            case "arena" -> cmdArena(sender, args);
             case "status" -> cmdStatus(sender);
             case "tp" -> cmdTeleport(sender);
             case "stop" -> {
@@ -231,6 +236,70 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
                             + ore.label() + " @ " + ore.x() + "," + ore.y() + "," + ore.z()));
         }, null);
         return true;
+    }
+
+    /** {@code /msf arena <tp|reset|list> [n]} - spectate, manually reset, or list. */
+    private void cmdArena(CommandSender sender, String[] args) {
+        if (arenas == null || !arenas.ready()) {
+            sender.sendMessage("MineSight: arena world unavailable.");
+            return;
+        }
+        String sub = args.length >= 2 ? args[1].toLowerCase() : "list";
+        switch (sub) {
+            case "tp" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("MineSight: arena tp must be run by a player.");
+                    return;
+                }
+                int id = args.length >= 3 ? parseIntOr(args[2], 0) : 0;
+                arenas.spectate(p, id);
+                sender.sendMessage("MineSight: spectating arena " + id + ".");
+            }
+            case "reset" -> {
+                int id = args.length >= 3 ? parseIntOr(args[2], 0) : 0;
+                ArenaManager.Arena a = arenas.arena(id);
+                arenas.stamp(a, () -> getLogger().info("Arena " + id + " reset."));
+                sender.sendMessage("MineSight: resetting arena " + id + ".");
+            }
+            default -> sender.sendMessage("MineSight: " + arenas.slotCount()
+                    + " arena slots in world '" + ArenaManager.WORLD + "'. "
+                    + "Use /msf arena tp <n> to watch, reset <n> to rebuild.");
+        }
+    }
+
+    private static int parseIntOr(String s, int def) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
+    /** plugin -> client {@code arena_ready}: the arena is reset and you're in it;
+     *  here is the ground-truth ore to seed memory with. */
+    private void sendArenaReady(Player player, ArenaManager.Arena a) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (DataOutputStream d = new DataOutputStream(out)) {
+            d.writeUTF("arena_ready");
+            d.writeInt(a.id());
+            Location s = a.spawn();
+            d.writeDouble(s.getX());
+            d.writeDouble(s.getY());
+            d.writeDouble(s.getZ());
+            d.writeFloat(s.getYaw());
+            List<ArenaManager.GroundTruthOre> ores = a.ores();
+            d.writeInt(ores.size());
+            for (ArenaManager.GroundTruthOre o : ores) {
+                d.writeUTF(o.label());
+                d.writeInt(o.x());
+                d.writeInt(o.y());
+                d.writeInt(o.z());
+            }
+        } catch (IOException e) {
+            return;
+        }
+        player.getScheduler().run(this,
+                t -> player.sendPluginMessage(this, CHANNEL, out.toByteArray()), null);
     }
 
     // ---- GUI collector link (server-side settings) -------------------------
@@ -391,11 +460,27 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
                     }
                     getLogger().fine("captured shot " + shotId + " ok=" + ok + " boxes=" + boxes);
                 }
+                case "arena_request" -> onArenaRequest(player);
+                case "episode_end" -> {
+                    int id = in.readInt();
+                    getLogger().fine("episode ended in arena " + id + " (" + player.getName() + ")");
+                }
                 default -> getLogger().fine("Unknown packet from " + player.getName() + ": " + type);
             }
         } catch (IOException e) {
             getLogger().warning("Bad packet from " + player.getName() + ": " + e);
         }
+    }
+
+    /** A client asked for a training episode: reset its arena, drop it in kitted,
+     *  then hand back the ground-truth ore. */
+    private void onArenaRequest(Player player) {
+        if (arenas == null || !arenas.ready()) {
+            getLogger().warning("arena_request from " + player.getName() + " but arena world is unavailable.");
+            return;
+        }
+        ArenaManager.Arena a = arenas.assign(player.getUniqueId());
+        arenas.stamp(a, () -> arenas.enter(player, a, () -> sendArenaReady(player, a)));
     }
 
     private void sendPong(Player player, String clientId) {

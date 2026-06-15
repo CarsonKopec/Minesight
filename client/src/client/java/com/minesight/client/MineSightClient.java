@@ -84,7 +84,7 @@ public class MineSightClient implements ClientModInitializer {
         RadarRenderer radar = new RadarRenderer(mc, memory);
         navigator = new Navigator(mc, memory);
         agent = new MiningAgent(mc, memory);
-        trainer = new TrainingHarness(mc, memory);
+        trainer = new TrainingHarness(mc);
         // 3D ore boxes + nav/agent routes in world space; 2D boxes + labels + radar on the HUD.
         WorldRenderEvents.AFTER_ENTITIES.register(highlights::render);
         WorldRenderEvents.AFTER_ENTITIES.register(navigator.renderer()::render);
@@ -192,6 +192,7 @@ public class MineSightClient implements ClientModInitializer {
                     }
                 }
                 case FarmProtocol.CAPTURE -> capture.onCapture(FarmProtocol.readCaptureBody(in));
+                case FarmProtocol.ARENA_READY -> trainer.onArenaReady(FarmProtocol.readArenaReadyBody(in));
                 default -> LOG.debug("Unknown packet type: {}", type);
             }
         } catch (IOException e) {

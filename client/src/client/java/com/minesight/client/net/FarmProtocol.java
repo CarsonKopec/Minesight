@@ -20,10 +20,25 @@ public final class FarmProtocol {
     public static final String PONG = "pong";
     public static final String CAPTURE = "capture";
     public static final String CAPTURED = "captured";
+    public static final String ARENA_REQUEST = "arena_request";
+    public static final String ARENA_READY = "arena_ready";
+    public static final String EPISODE_END = "episode_end";
 
     /** An ore the plugin wants photographed, as a world-space block AABB. */
     public record OreBox(String label, int minX, int minY, int minZ,
                          int maxX, int maxY, int maxZ) {
+    }
+
+    /** A ground-truth ore block in a training arena (exact position + label). */
+    public record GroundTruthOre(String label, int x, int y, int z) {
+    }
+
+    /**
+     * plugin -> client: your training arena is reset and you're standing in it.
+     * Seed memory with {@code ores} and run an episode from {@code spawn}.
+     */
+    public record ArenaReady(int arenaId, double sx, double sy, double sz, float yaw,
+                             List<GroundTruthOre> ores) {
     }
 
     /**
@@ -46,6 +61,47 @@ public final class FarmProtocol {
         } catch (IOException ignored) {
         }
         return out.toByteArray();
+    }
+
+    /** client -> plugin: "assign + reset my training arena and drop me in". */
+    public static byte[] arenaRequest(String clientId) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (DataOutputStream d = new DataOutputStream(out)) {
+            d.writeUTF(ARENA_REQUEST);
+            d.writeUTF(clientId);
+        } catch (IOException ignored) {
+        }
+        return out.toByteArray();
+    }
+
+    /** client -> plugin: "episode finished in this arena". */
+    public static byte[] episodeEnd(int arenaId) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (DataOutputStream d = new DataOutputStream(out)) {
+            d.writeUTF(EPISODE_END);
+            d.writeInt(arenaId);
+        } catch (IOException ignored) {
+        }
+        return out.toByteArray();
+    }
+
+    /** Read an {@code arena_ready} body (the type tag has already been consumed). */
+    public static ArenaReady readArenaReadyBody(DataInputStream in) throws IOException {
+        int arenaId = in.readInt();
+        double sx = in.readDouble();
+        double sy = in.readDouble();
+        double sz = in.readDouble();
+        float yaw = in.readFloat();
+        int n = in.readInt();
+        List<GroundTruthOre> ores = new ArrayList<>(Math.max(0, n));
+        for (int i = 0; i < n; i++) {
+            String label = in.readUTF();
+            int x = in.readInt();
+            int y = in.readInt();
+            int z = in.readInt();
+            ores.add(new GroundTruthOre(label, x, y, z));
+        }
+        return new ArenaReady(arenaId, sx, sy, sz, yaw, ores);
     }
 
     /** client -> plugin capture acknowledgement. */
