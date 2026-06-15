@@ -27,11 +27,8 @@ import java.util.List;
  */
 public final class AutoWalker {
 
-    private static final double WAYPOINT_RADIUS = 0.6;
-    private static final int STUCK_WINDOW = 40;       // mining is slow; be patient
-    private static final double STUCK_MIN_MOVE = 0.35;
-
     private final MinecraftClient mc;
+    private final AgentParams params;
     private List<BlockPos> path;
     private int index;
     private boolean active;
@@ -41,7 +38,12 @@ public final class AutoWalker {
     private int stuckTicks;
 
     public AutoWalker(MinecraftClient mc) {
+        this(mc, AgentParams.defaults());
+    }
+
+    public AutoWalker(MinecraftClient mc, AgentParams params) {
         this.mc = mc;
+        this.params = params;
     }
 
     public boolean isActive() {
@@ -83,7 +85,7 @@ public final class AutoWalker {
         double pz = player.getZ();
 
         BlockPos wp = path.get(index);
-        if (horiz(px, pz, wp) < WAYPOINT_RADIUS && Math.abs(wp.getY() - py) < 1.3) {
+        if (horiz(px, pz, wp) < params.waypointRadius && Math.abs(wp.getY() - py) < 1.3) {
             if (++index >= path.size()) {
                 stop();
                 return;
@@ -125,7 +127,7 @@ public final class AutoWalker {
         player.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
         player.setPitch(0.0f);
         mc.options.forwardKey.setPressed(true);
-        mc.options.sprintKey.setPressed(horiz(px, pz, wp) > 1.5);
+        mc.options.sprintKey.setPressed(horiz(px, pz, wp) > params.sprintDist);
         boolean stepUp = wp.getY() > Math.floor(py) + 0.01;
         mc.options.jumpKey.setPressed(stepUp || player.horizontalCollision);
 
@@ -143,12 +145,12 @@ public final class AutoWalker {
             }
         }
 
-        if (++stuckTicks >= STUCK_WINDOW) {
+        if (++stuckTicks >= params.stuckWindow) {
             double moved = Math.hypot(px - lastX, pz - lastZ);
             lastX = px;
             lastZ = pz;
             stuckTicks = 0;
-            if (moved < STUCK_MIN_MOVE) {
+            if (moved < params.stuckMinMove) {
                 stop();
             }
         }

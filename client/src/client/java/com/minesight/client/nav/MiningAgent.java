@@ -39,16 +39,16 @@ import java.util.Set;
 public final class MiningAgent {
 
     private static final Logger LOG = LoggerFactory.getLogger("minesight");
-    private static final int EXPLORE_STEP = 5;      // tunnel segment length
-    private static final int MINE_TIMEOUT = 200;    // give up a block after 10s
-    private static final int REPATH = 20;
-    private static final long REACH_SQ = 20L;       // ~4.5 blocks
     private static final long PICK_RANGE_SQ = 80L * 80L;
+    /** Fitness weight for breaking a rare ore vs. a common one (auto-tuner). */
+    private static final double RARE_VALUE = 8.0;
+    private static final double COMMON_VALUE = 1.0;
 
     private enum State {EXPLORE, GOTO, MINE}
 
     private final MinecraftClient mc;
     private final OreMemory memory;
+    private final AgentParams params;
     private final PathFinder finder;
     private final AutoWalker walker;
     private final PathRenderer renderer;
@@ -62,12 +62,20 @@ public final class MiningAgent {
     private int mineTicks;
     private float lastHealth = -1.0f;
     private final Set<Long> done = new HashSet<>();
+    /** Rarity-weighted count of ore broken since construction - the fitness signal. */
+    private double minedScore;
+    private int minedCount;
 
     public MiningAgent(MinecraftClient mc, OreMemory memory) {
+        this(mc, memory, AgentParams.defaults());
+    }
+
+    public MiningAgent(MinecraftClient mc, OreMemory memory, AgentParams params) {
         this.mc = mc;
         this.memory = memory;
-        this.finder = new PathFinder(mc);
-        this.walker = new AutoWalker(mc);
+        this.params = params;
+        this.finder = new PathFinder(mc, params);
+        this.walker = new AutoWalker(mc, params);
         this.renderer = new PathRenderer(mc);
     }
 
@@ -79,6 +87,16 @@ public final class MiningAgent {
         return running;
     }
 
+    /** Rarity-weighted ore broken since this agent was built - the episode fitness. */
+    public double minedScore() {
+        return minedScore;
+    }
+
+    /** Raw count of ore blocks broken since construction. */
+    public int minedCount() {
+        return minedCount;
+    }
+
     public void toggle() {
         if (running) {
             msg("auto-mine off");
@@ -88,14 +106,23 @@ public final class MiningAgent {
         if (mc.player == null) {
             return;
         }
+        start();
+        msg("auto-mine on");
+    }
+
+    /**
+     * Begin (or resume) autonomous mining. Resets the FSM and the visited set so
+     * it explores fresh, but keeps the mined-score tally - the training harness
+     * re-starts a stalled agent mid-episode without losing its fitness so far.
+     */
+    public void start() {
         running = true;
         state = State.EXPLORE;
         target = null;
-        exploreDir = mc.player.getHorizontalFacing();
+        exploreDir = mc.player != null ? mc.player.getHorizontalFacing() : Direction.NORTH;
         exploreTurns = 0;
         done.clear();
         lastHealth = -1.0f;
-        msg("auto-mine on");
     }
 
     public void stop() {
@@ -157,7 +184,7 @@ public final class MiningAgent {
         BlockPos feet = player.getBlockPos();
         List<BlockPos> tunnel = new ArrayList<>();
         tunnel.add(feet);
-        for (int i = 1; i <= EXPLORE_STEP; i++) {
+        for (int i = 1; i <= params.exploreStep; i++) {
             tunnel.add(feet.add(exploreDir.getOffsetX() * i, 0, exploreDir.getOffsetZ() * i));
         }
         walker.start(tunnel);
@@ -175,7 +202,7 @@ public final class MiningAgent {
             return;
         }
         if (--repath <= 0) {
-            repath = REPATH;
+            repath = params.repath;
             List<BlockPos> path = finder.findPath(player.getBlockPos(), target);
             if (path == null || path.isEmpty()) {
                 abandon(target);
@@ -192,6 +219,8 @@ public final class MiningAgent {
 
     private void mining(ClientPlayerEntity player) {
         if (mc.world.getBlockState(target).isAir()) {   // broke it
+            minedScore += OreColors.isRare(labelOf(target)) ? RARE_VALUE : COMMON_VALUE;
+            minedCount++;
             done.add(target.asLong());
             memory.forget(target);
             target = null;
@@ -205,9 +234,19 @@ public final class MiningAgent {
             return;
         }
         mineFacing(player, target);
-        if (++mineTicks > MINE_TIMEOUT) {
+        if (++mineTicks > params.mineTimeout) {
             abandon(target);
         }
+    }
+
+    /** Remembered label for a position (for fitness weighting), or empty. */
+    private String labelOf(BlockPos b) {
+        for (OreMemory.Node n : memory.snapshot()) {
+            if (n.pos.equals(b)) {
+                return n.label;
+            }
+        }
+        return "";
     }
 
     private boolean startGoto(ClientPlayerEntity player, BlockPos ore) {
@@ -219,7 +258,7 @@ public final class MiningAgent {
         target = ore;
         walker.start(path);
         renderer.setPath(path, ore);
-        repath = REPATH;
+        repath = params.repath;
         state = State.GOTO;
         return true;
     }
@@ -233,12 +272,16 @@ public final class MiningAgent {
         state = State.EXPLORE;
     }
 
+    /**
+     * Nearest unvisited ore in range, by <i>effective</i> distance: rare ore gets
+     * its squared distance divided by rareWeight^2, so a high rareWeight makes the
+     * agent detour for diamond/emerald while a low one just takes whatever's closest.
+     */
     private BlockPos pickOre(ClientPlayerEntity player) {
         BlockPos me = player.getBlockPos();
-        BlockPos rare = null;
-        BlockPos any = null;
-        long rd = Long.MAX_VALUE;
-        long ad = Long.MAX_VALUE;
+        BlockPos best = null;
+        double bestEff = Double.MAX_VALUE;
+        double rareDiscount = params.rareWeight * params.rareWeight;
         for (OreMemory.Node n : memory.snapshot()) {
             if (done.contains(n.pos.asLong())) {
                 continue;
@@ -247,16 +290,13 @@ public final class MiningAgent {
             if (d > PICK_RANGE_SQ) {
                 continue;
             }
-            if (d < ad) {
-                ad = d;
-                any = n.pos;
-            }
-            if (OreColors.isRare(n.label) && d < rd) {
-                rd = d;
-                rare = n.pos;
+            double eff = OreColors.isRare(n.label) ? d / rareDiscount : d;
+            if (eff < bestEff) {
+                bestEff = eff;
+                best = n.pos;
             }
         }
-        return rare != null ? rare : any;
+        return best;
     }
 
     private void mineFacing(ClientPlayerEntity player, BlockPos b) {
@@ -276,7 +316,7 @@ public final class MiningAgent {
         double dx = b.getX() + 0.5 - eye.x;
         double dy = b.getY() + 0.5 - eye.y;
         double dz = b.getZ() + 0.5 - eye.z;
-        return dx * dx + dy * dy + dz * dz <= REACH_SQ;
+        return dx * dx + dy * dy + dz * dz <= params.reachSq();
     }
 
     private void release() {

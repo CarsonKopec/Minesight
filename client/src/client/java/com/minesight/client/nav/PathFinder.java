@@ -29,19 +29,18 @@ import java.util.PriorityQueue;
 public final class PathFinder {
 
     private static final int MAX_EXPANSIONS = 15000;
-    private static final int MAX_DROP = 3;
     private static final int MAX_RANGE = 96;
-    /** Cost of mining one block, in walk-steps - high enough to prefer walking. */
-    private static final double MINE_COST = 5.0;
-    /** Cost of placing a block to bridge a gap. */
-    private static final double PLACE_COST = 6.0;
-    /** Penalty for standing next to lava - routes away from the edges. */
-    private static final double LAVA_NEAR_COST = 8.0;
 
     private final MinecraftClient mc;
+    private final AgentParams params;
 
     public PathFinder(MinecraftClient mc) {
+        this(mc, AgentParams.defaults());
+    }
+
+    public PathFinder(MinecraftClient mc, AgentParams params) {
         this.mc = mc;
+        this.params = params;
     }
 
     private record Node(BlockPos pos, double f) {
@@ -118,7 +117,7 @@ public final class PathFinder {
                 out.add(pos.add(dx, 1, dz));
                 added = true;
             } else if (clear(flat)) {                               // drop down
-                for (int dy = 1; dy <= MAX_DROP; dy++) {
+                for (int dy = 1; dy <= params.maxDrop; dy++) {
                     BlockPos down = pos.add(dx, -dy, dz);
                     if (standable(down)) {
                         out.add(down);
@@ -176,17 +175,17 @@ public final class PathFinder {
         }
         // Any currently-solid block we must break to occupy `to`.
         if (solid(to)) {
-            c += MINE_COST;
+            c += params.mineCost;
         }
         if (solid(to.up())) {
-            c += MINE_COST;
+            c += params.mineCost;
         }
         // Same-level move onto a floorless cell = a bridge (place a block).
         if (dy == 0 && !solid(to.down())) {
-            c += PLACE_COST;
+            c += params.placeCost;
         }
         if (lavaAdjacent(to)) {
-            c += LAVA_NEAR_COST;
+            c += params.lavaNearCost;
         }
         return c;
     }
@@ -235,7 +234,7 @@ public final class PathFinder {
     }
 
     private BlockPos standableAt(BlockPos pos) {
-        for (int dy = 0; dy >= -MAX_DROP; dy--) {
+        for (int dy = 0; dy >= -params.maxDrop; dy--) {
             BlockPos c = pos.add(0, dy, 0);
             if (standable(c)) {
                 return c;

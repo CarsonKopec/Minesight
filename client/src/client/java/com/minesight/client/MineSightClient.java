@@ -12,6 +12,7 @@ import com.minesight.client.detect.WorldHighlightRenderer;
 import com.minesight.client.detect.WorldMarkerRenderer;
 import com.minesight.client.nav.MiningAgent;
 import com.minesight.client.nav.Navigator;
+import com.minesight.client.nav.TrainingHarness;
 import com.minesight.client.net.FarmPayload;
 import com.minesight.client.net.FarmProtocol;
 import net.fabricmc.api.ClientModInitializer;
@@ -55,11 +56,13 @@ public class MineSightClient implements ClientModInitializer {
     private DetectionAnchor anchor;
     private Navigator navigator;
     private MiningAgent agent;
+    private TrainingHarness trainer;
     private KeyBinding overlayKey;
     private KeyBinding reviewKey;
     private KeyBinding radarKey;
     private KeyBinding navKey;
     private KeyBinding agentKey;
+    private KeyBinding trainKey;
 
     @Override
     public void onInitializeClient() {
@@ -81,6 +84,7 @@ public class MineSightClient implements ClientModInitializer {
         RadarRenderer radar = new RadarRenderer(mc, memory);
         navigator = new Navigator(mc, memory);
         agent = new MiningAgent(mc, memory);
+        trainer = new TrainingHarness(mc, memory);
         // 3D ore boxes + nav/agent routes in world space; 2D boxes + labels + radar on the HUD.
         WorldRenderEvents.AFTER_ENTITIES.register(highlights::render);
         WorldRenderEvents.AFTER_ENTITIES.register(navigator.renderer()::render);
@@ -106,6 +110,10 @@ public class MineSightClient implements ClientModInitializer {
         agentKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.minesight.automine", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F4,
                 KeyBinding.Category.MISC));
+        // Auto-tuner harness: unbound by default (dev tool); bind it in Controls.
+        trainKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.minesight.train", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN,
+                KeyBinding.Category.MISC));
 
         // One client-tick handler: capture state machine, engine I/O, anchoring,
         // keybinds.
@@ -115,16 +123,26 @@ public class MineSightClient implements ClientModInitializer {
             anchor.tick();
             navigator.tick();
             agent.tick();
+            trainer.tick();
             while (navKey.wasPressed()) {
                 navigator.toggle();
                 if (navigator.isActive()) {
                     agent.stop();
+                    trainer.stop();
                 }
             }
             while (agentKey.wasPressed()) {
                 agent.toggle();
                 if (agent.isActive()) {
                     navigator.cancel();
+                    trainer.stop();
+                }
+            }
+            while (trainKey.wasPressed()) {
+                trainer.toggle();
+                if (trainer.isActive()) {
+                    navigator.cancel();
+                    agent.stop();
                 }
             }
             while (overlayKey.wasPressed()) {

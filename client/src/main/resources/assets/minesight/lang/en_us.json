@@ -3,5 +3,6 @@
   "key.minesight.review": "MineSight: flag frame for review",
   "key.minesight.radar": "MineSight: toggle radar",
   "key.minesight.navigate": "MineSight: navigate to nearest ore",
-  "key.minesight.automine": "MineSight: toggle auto-mine (autonomous)"
+  "key.minesight.automine": "MineSight: toggle auto-mine (autonomous)",
+  "key.minesight.train": "MineSight: toggle auto-tuner training"
 }
