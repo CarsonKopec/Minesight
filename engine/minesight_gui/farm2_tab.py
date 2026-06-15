@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .constants import CLIENT_DIR, PLUGIN_DIR
+from .constants import CLIENT_DIR, ENGINE_DIR, PLUGIN_DIR, PYTHON
 from .procs import ManagedProcess
 from .widgets import LogView
 
@@ -51,6 +51,12 @@ class Farm2Tab(QWidget):
         self._launch_queue: list[int] = []
         self._launch_timer = QTimer(self, interval=LAUNCH_STAGGER_MS)
         self._launch_timer.timeout.connect(self._launch_next)
+
+        # The CMA-ES optimizer process (python -m minesight.evolve).
+        self.train_proc = ManagedProcess(self)
+        self.train_proc.line.connect(lambda ln: self.log.append_line(f"[tune] {ln}"))
+        self.train_proc.started.connect(self._update_state)
+        self.train_proc.finished.connect(self._on_train_exit)
 
         layout = QVBoxLayout(self)
 
@@ -119,6 +125,54 @@ class Farm2Tab(QWidget):
         self.running_label = QLabel("0 running")
         crow.addWidget(self.running_label)
         layout.addWidget(clients)
+
+        # --- headless auto-tuner ----------------------------------------------
+        train = QGroupBox("Headless training (CMA-ES auto-tuner)")
+        trow = QHBoxLayout(train)
+        trow.addWidget(QLabel("Arenas:"))
+        self.arena_count = QSpinBox(minimum=1, maximum=36,
+                                    value=int(self.settings.value("farm2/arenaCount", 4)))
+        self.arena_count.setToolTip("Bots training in parallel, one per arena (/msf train start N).")
+        trow.addWidget(self.arena_count)
+        trow.addWidget(QLabel("Gens:"))
+        self.gen_count = QSpinBox(minimum=1, maximum=100000,
+                                  value=int(self.settings.value("farm2/genCount", 40)))
+        self.gen_count.setToolTip("CMA-ES generations to run.")
+        trow.addWidget(self.gen_count)
+        self.train_bots_btn = QPushButton("▶ Train (bots)")
+        self.train_bots_btn.setToolTip(
+            "Headless server-side bots: starts the in-arena training loop on the\n"
+            "running server, then runs the optimizer to feed it candidates. No\n"
+            "rendering client needed. Watch with a spectator: /msf arena tp <n>."
+        )
+        self.train_bots_btn.clicked.connect(self.train_bots)
+        trow.addWidget(self.train_bots_btn)
+        self.train_sim_btn = QPushButton("🧪 Train (sim)")
+        self.train_sim_btn.setToolTip(
+            "Pure-Python voxel sim - fastest, needs no server or client. Great\n"
+            "for a quick pre-tune; validate the winner in real MC."
+        )
+        self.train_sim_btn.clicked.connect(self.train_sim)
+        trow.addWidget(self.train_sim_btn)
+        self.bot_demo_btn = QPushButton("🤖 Run one bot")
+        self.bot_demo_btn.setToolTip("Run a single watchable bot episode in arena 0 (/msf bot 0).")
+        self.bot_demo_btn.clicked.connect(self.run_one_bot)
+        trow.addWidget(self.bot_demo_btn)
+        self.stop_train_btn = QPushButton("■ Stop training")
+        self.stop_train_btn.clicked.connect(self.stop_training)
+        trow.addWidget(self.stop_train_btn)
+        self.train_status = QLabel("tuner: idle")
+        trow.addWidget(self.train_status, 1)
+        layout.addWidget(train)
+
+        tnote = QLabel(
+            "Bots train against the real arena world (no client, no GLFW); the "
+            "winner is exported to best.json and the client loads it on next join. "
+            "Boost throughput with /tick rate in the server console."
+        )
+        tnote.setWordWrap(True)
+        tnote.setStyleSheet("color: #999;")
+        layout.addWidget(tnote)
 
         self.log = LogView()
         layout.addWidget(self.log, 1)
@@ -247,6 +301,61 @@ class Farm2Tab(QWidget):
         self.log.append_line(f"[clients stopped - {killed} game process(es) terminated]")
         self._update_running()
 
+    # --- training -------------------------------------------------------------
+
+    def train_bots(self) -> None:
+        """Headless server-side bot training: kick off the in-arena loop on the
+        server, then run the optimizer to feed it candidates."""
+        if self.train_proc.running:
+            return
+        if not self.server_proc.running:
+            self.log.append_line("[start the server first, then Train (bots)]")
+            return
+        self._save_train_settings()
+        n = self.arena_count.value()
+        g = self.gen_count.value()
+        self.server_proc.send(f"msf train start {n}")
+        self.log.append_line(f"$ msf train start {n}  (server console)")
+        self.log.append_line(f"$ python -m minesight.evolve --gens {g}")
+        self.train_proc.start(PYTHON, ["-m", "minesight.evolve", "--gens", str(g)], str(ENGINE_DIR))
+        log.info("farm2: bot training started (arenas=%d gens=%d)", n, g)
+        self._update_state()
+
+    def train_sim(self) -> None:
+        """Pure-Python voxel sim - no server or client needed."""
+        if self.train_proc.running:
+            return
+        self._save_train_settings()
+        g = self.gen_count.value()
+        self.log.append_line(f"$ python -m minesight.evolve --sim --gens {g}")
+        self.train_proc.start(
+            PYTHON, ["-m", "minesight.evolve", "--sim", "--gens", str(g)], str(ENGINE_DIR)
+        )
+        log.info("farm2: sim training started (gens=%d)", g)
+        self._update_state()
+
+    def run_one_bot(self) -> None:
+        if not self.server_proc.running:
+            self.log.append_line("[start the server first, then Run one bot]")
+            return
+        self.server_proc.send("msf bot 0")
+        self.log.append_line("$ msf bot 0  (server console) - /msf arena tp 0 to watch")
+
+    def stop_training(self) -> None:
+        if self.server_proc.running:
+            self.server_proc.send("msf train stop")
+        self.train_proc.stop()
+        self.log.append_line("[training stopped]")
+        self._update_state()
+
+    def _on_train_exit(self, code: int) -> None:
+        self.log.append_line(f"[optimizer exited ({code})]")
+        self._update_state()
+
+    def _save_train_settings(self) -> None:
+        self.settings.setValue("farm2/arenaCount", self.arena_count.value())
+        self.settings.setValue("farm2/genCount", self.gen_count.value())
+
     # --- helpers --------------------------------------------------------------
 
     def _prep_run_dir(self, run_dir: Path) -> None:
@@ -294,12 +403,21 @@ class Farm2Tab(QWidget):
     def _update_state(self) -> None:
         building = self.build_proc.running
         server_up = self.server_proc.running
+        tuning = self.train_proc.running
         self.build_btn.setEnabled(not building)
         self.start_server_btn.setEnabled(not server_up)
         self.stop_server_btn.setEnabled(server_up)
         self.server_status.setText("server: running" if server_up else "server: stopped")
+        self.train_bots_btn.setEnabled(server_up and not tuning)
+        self.train_sim_btn.setEnabled(not tuning)
+        self.bot_demo_btn.setEnabled(server_up)
+        self.stop_train_btn.setEnabled(tuning)
+        self.train_status.setText("tuner: running" if tuning else "tuner: idle")
 
     def shutdown(self) -> None:
+        if self.server_proc.running:
+            self.server_proc.send("msf train stop")
+        self.train_proc.stop()
         self.stop_clients()
         self.stop_server()
         self.build_proc.stop()

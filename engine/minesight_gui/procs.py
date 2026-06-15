@@ -44,6 +44,12 @@ class ManagedProcess(QObject):
             if ln.strip():
                 self.line.emit(ln)
 
+    def send(self, text: str) -> None:
+        """Write a line to the process's stdin - e.g. a server console command
+        forwarded through gradlew runServer to the Paper console."""
+        if self.running:
+            self.proc.write((text + "\n").encode("utf-8"))
+
     def stop(self) -> None:
         # kill() rather than terminate(): console children ignore WM_CLOSE on Windows.
         if self.running:
