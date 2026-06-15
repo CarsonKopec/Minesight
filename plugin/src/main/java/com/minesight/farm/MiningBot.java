@@ -1,0 +1,380 @@
+package com.minesight.farm;
+
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Zombie;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.java.JavaPlugin;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * One headless training episode run by a controllable bot in a {@link ArenaManager}
+ * arena. The bot runs the same goto/mine behavior as the client agent - pick the
+ * nearest (rare-weighted) ground-truth ore, path to it with the dig-aware
+ * {@link BotPathFinder}, tunnel/bridge through the real world, break the ore -
+ * scored identically to the in-game harness and the sim.
+ *
+ * <p>Real server world (real blocks/fluids), watchable entity, no client / no
+ * GLFW. Movement is scripted (we step the bot cell-to-cell); mining/placing use
+ * the world API. Ticked once per server tick on the arena's region thread.
+ */
+public final class MiningBot {
+
+    private static final double RARE_VALUE = 8.0;
+    private static final double COMMON_VALUE = 1.0;
+    private static final double DEATH_PENALTY = 10.0;
+    private static final double SPEED_WEIGHT = 20.0;
+    private static final double MAX_HP = 20.0;
+    private static final double LAVA_STEP_DMG = 3.0;
+    private static final double LAVA_IN_DMG = 12.0;
+    private static final double FALL_PER = 3.0;
+    private static final int WALK_TICKS = 5;
+    private static final int SPRINT_TICKS = 3;
+    private static final int PLACE_TICKS = 4;
+
+    public record Result(double fitness, double score, int ores, int deaths, int ticks,
+                         boolean cleared) {
+    }
+
+    private enum State {IDLE, PATH, MOVE, MINE, DONE}
+
+    private final JavaPlugin plugin;
+    private final World world;
+    private final BotParams params;
+    private final BotPathFinder finder;
+    private final int budget;
+    private final BotPos spawnPos;
+    private final Map<BotPos, String> remaining = new HashMap<>();
+    private final int total;
+
+    private LivingEntity entity;
+    private BotPos pos;
+    private double hp = MAX_HP;
+    private int t;
+    private double score;
+    private int mined;
+    private int deaths;
+
+    private State state = State.IDLE;
+    private List<BotPos> path;
+    private int wp;
+    private BotPos target;
+    private BotPos goal;
+
+    private List<BotPos> mineQueue;
+    private boolean mineThenScore;
+    private boolean miningOre;
+    private BotPos mineCell;
+    private int mineCountdown;
+
+    private int moveCountdown;
+    private BotPos moveTo;
+
+    public MiningBot(JavaPlugin plugin, ArenaManager.Arena arena, BotParams params, int budget) {
+        this.plugin = plugin;
+        this.params = params;
+        this.budget = budget;
+        Location s = arena.spawn();
+        this.world = s.getWorld();
+        BotPos min = new BotPos(arena.ox, arena.oy, arena.oz);
+        BotPos max = new BotPos(arena.ox + ArenaManager.W - 1, arena.oy + ArenaManager.H - 1,
+                arena.oz + ArenaManager.D - 1);
+        this.finder = new BotPathFinder(world, min, max, params);
+        this.spawnPos = new BotPos(s.getBlockX(), s.getBlockY(), s.getBlockZ());
+        this.pos = spawnPos;
+        for (ArenaManager.GroundTruthOre o : arena.ores()) {
+            remaining.put(new BotPos(o.x(), o.y(), o.z()), o.label());
+        }
+        this.total = remaining.size();
+    }
+
+    /** Spawn the visible bot entity. Call on the arena's region thread. */
+    public void spawn(String name) {
+        Location loc = center(pos);
+        entity = world.spawn(loc, Zombie.class, z -> {
+            z.setAI(false);
+            z.setSilent(true);
+            z.setInvulnerable(true);     // damage is modeled by the episode, not the server
+            z.setPersistent(true);
+            z.setRemoveWhenFarAway(false);
+            z.setCustomName(name);
+            z.setCustomNameVisible(true);
+            z.setShouldBurnInDay(false);
+            if (z.getEquipment() != null) {
+                z.getEquipment().setItemInMainHand(new ItemStack(Material.NETHERITE_PICKAXE));
+            }
+        });
+    }
+
+    public boolean isDone() {
+        return state == State.DONE;
+    }
+
+    public Result result() {
+        boolean cleared = mined == total;
+        double speedBonus = cleared ? SPEED_WEIGHT * (budget - Math.min(t, budget)) / budget : 0.0;
+        double fitness = score - DEATH_PENALTY * deaths + speedBonus;
+        return new Result(fitness, score, mined, deaths, Math.min(t, budget), cleared);
+    }
+
+    public void cleanup() {
+        if (entity != null && !entity.isDead()) {
+            entity.remove();
+        }
+    }
+
+    public void tick() {
+        if (state == State.DONE) {
+            return;
+        }
+        if (t++ >= budget) {
+            finish();
+            return;
+        }
+        switch (state) {
+            case IDLE -> idle();
+            case PATH -> pathStep();
+            case MOVE -> moveStep();
+            case MINE -> mineStep();
+            default -> {
+            }
+        }
+    }
+
+    // -- states ------------------------------------------------------------
+
+    private void idle() {
+        if (remaining.isEmpty()) {
+            finish();
+            return;
+        }
+        target = pickOre();
+        goal = finder.standableNear(target, pos, params.reachDist);
+        if (goal == null) {
+            remaining.remove(target);   // nowhere to stand near it
+            return;
+        }
+        path = finder.find(pos, goal);
+        if (path == null || path.isEmpty()) {
+            remaining.remove(target);
+            return;
+        }
+        wp = 1;
+        state = State.PATH;
+    }
+
+    private void pathStep() {
+        if (wp >= path.size()) {
+            // Arrived at the standing cell; tunnel through to the ore.
+            mineQueue = new ArrayList<>();
+            for (BotPos c : lineCells(pos, target)) {
+                mineQueue.add(c);
+                mineQueue.add(c.up());
+            }
+            mineQueue.add(target);
+            mineThenScore = true;
+            startMining();
+            return;
+        }
+        BotPos w = path.get(wp);
+        BotPos obs = obstruction(w);
+        if (obs != null) {
+            if (!finder.mineable(obs)) {
+                remaining.remove(target);   // blocked by bedrock/lava; abandon
+                state = State.IDLE;
+                return;
+            }
+            mineQueue = new ArrayList<>(List.of(obs));
+            mineThenScore = false;
+            startMining();
+            return;
+        }
+        if (w.y() == pos.y() && !finder.solid(w.down())) {
+            setBlock(w.down(), Material.COBBLESTONE);   // bridge
+            moveCountdown = PLACE_TICKS;
+            moveTo = w;
+            state = State.MOVE;
+            return;
+        }
+        moveCountdown = pos.dist(goal) > params.sprintDist ? SPRINT_TICKS : WALK_TICKS;
+        moveTo = w;
+        state = State.MOVE;
+    }
+
+    private void moveStep() {
+        if (--moveCountdown > 0) {
+            return;
+        }
+        applyHazards(pos, moveTo);
+        if (hp <= 0) {
+            die();
+            return;
+        }
+        pos = moveTo;
+        teleport(pos);
+        wp++;
+        state = State.PATH;
+    }
+
+    private void startMining() {
+        while (mineQueue != null && !mineQueue.isEmpty()) {
+            BotPos c = mineQueue.remove(0);
+            boolean isOre = c.equals(target);
+            if (!isOre && !finder.mineable(c)) {
+                continue;   // already air / unbreakable filler
+            }
+            if (isOre && finder.mat(c).isAir()) {
+                scoreOre();
+                settleFall();
+                state = State.IDLE;
+                return;
+            }
+            mineCell = c;
+            miningOre = isOre;
+            mineCountdown = breakTicks(c);
+            state = State.MINE;
+            return;
+        }
+        state = mineThenScore ? State.IDLE : State.PATH;
+    }
+
+    private void mineStep() {
+        swing();
+        if (--mineCountdown > 0) {
+            return;
+        }
+        if (miningOre) {
+            scoreOre();
+            settleFall();
+            miningOre = false;
+            state = State.IDLE;
+            return;
+        }
+        setBlock(mineCell, Material.AIR);
+        startMining();
+    }
+
+    // -- helpers -----------------------------------------------------------
+
+    private void scoreOre() {
+        String label = remaining.remove(target);
+        setBlock(target, Material.AIR);
+        if (label != null) {
+            score += isRare(label) ? RARE_VALUE : COMMON_VALUE;
+            mined++;
+        }
+    }
+
+    private void applyHazards(BotPos from, BotPos to) {
+        if (finder.mat(to) == Material.LAVA || finder.mat(to.up()) == Material.LAVA) {
+            hp -= LAVA_IN_DMG;
+        } else if (finder.lavaAdjacent(to)) {
+            hp -= LAVA_STEP_DMG;
+        }
+        int drop = from.y() - to.y();
+        if (drop > 3) {
+            hp -= (drop - 3) * FALL_PER;
+        }
+    }
+
+    private void settleFall() {
+        int fall = 0;
+        while (fall < 8 && !finder.standable(pos)) {
+            pos = pos.down();
+            fall++;
+        }
+        teleport(pos);
+        if (fall > 3) {
+            hp -= (fall - 3) * FALL_PER;
+            if (hp <= 0) {
+                die();
+            }
+        }
+    }
+
+    private void die() {
+        deaths++;
+        pos = spawnPos;
+        hp = MAX_HP;
+        teleport(pos);
+        state = State.IDLE;
+    }
+
+    private void finish() {
+        state = State.DONE;
+    }
+
+    private BotPos pickOre() {
+        BotPos best = null;
+        double bestEff = Double.MAX_VALUE;
+        double disc = params.rareWeight * params.rareWeight;
+        for (Map.Entry<BotPos, String> e : remaining.entrySet()) {
+            long d2 = e.getKey().sqDist(pos);
+            double eff = isRare(e.getValue()) ? d2 / disc : d2;
+            if (eff < bestEff) {
+                bestEff = eff;
+                best = e.getKey();
+            }
+        }
+        return best;
+    }
+
+    private BotPos obstruction(BotPos w) {
+        if (finder.solid(w.up())) {
+            return w.up();
+        }
+        if (finder.solid(w)) {
+            return w;
+        }
+        return null;
+    }
+
+    private List<BotPos> lineCells(BotPos from, BotPos ore) {
+        int steps = Math.max(Math.max(Math.abs(ore.x() - from.x()), Math.abs(ore.y() - from.y())),
+                Math.abs(ore.z() - from.z()));
+        List<BotPos> cells = new ArrayList<>();
+        for (int i = 1; i < steps; i++) {
+            double f = (double) i / steps;
+            cells.add(new BotPos(
+                    (int) Math.round(from.x() + (ore.x() - from.x()) * f),
+                    (int) Math.round(from.y() + (ore.y() - from.y()) * f),
+                    (int) Math.round(from.z() + (ore.z() - from.z()) * f)));
+        }
+        return cells;
+    }
+
+    private int breakTicks(BotPos b) {
+        return finder.mat(b).name().contains("DEEPSLATE") ? 9 : 6;
+    }
+
+    private void setBlock(BotPos b, Material m) {
+        world.getBlockAt(b.x(), b.y(), b.z()).setType(m, false);
+    }
+
+    private void teleport(BotPos b) {
+        if (entity != null && !entity.isDead()) {
+            entity.teleport(center(b));
+        }
+    }
+
+    private void swing() {
+        if (entity != null && !entity.isDead() && entity.getType() == EntityType.ZOMBIE) {
+            entity.swingMainHand();
+        }
+    }
+
+    private Location center(BotPos b) {
+        return new Location(world, b.x() + 0.5, b.y(), b.z() + 0.5);
+    }
+
+    private static boolean isRare(String label) {
+        return label.contains("diamond") || label.contains("emerald");
+    }
+}

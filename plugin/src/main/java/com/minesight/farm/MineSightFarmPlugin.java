@@ -49,6 +49,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
     private VisitedStore visited;
     private GuiLink guiLink;
     private ArenaManager arenas;
+    private BotTrainer botTrainer;
     private int heartbeat;
 
     @Override
@@ -61,6 +62,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         guiLink = new GuiLink(this);
         arenas = new ArenaManager(this);
         arenas.init();
+        botTrainer = new BotTrainer(this, arenas);
 
         // Paper plugins don't support YAML command declarations; register the
         // command programmatically (callable from onEnable).
@@ -98,6 +100,9 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
 
     @Override
     public void onDisable() {
+        if (botTrainer != null) {
+            botTrainer.stop();
+        }
         if (locator != null) {
             locator.stop();
         }
@@ -115,13 +120,15 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         CommandSender sender = source.getSender();
         if (args.length == 0) {
             sender.sendMessage("Usage: /minesightfarm <scan <ore> [radius] | capture [count] | "
-                    + "arena <tp|reset|list> [n] | status | tp | stop>");
+                    + "arena <tp|reset|list> [n] | bot [n] | train <start [n]|stop> | status | tp | stop>");
             return;
         }
         switch (args[0].toLowerCase()) {
             case "scan" -> cmdScan(sender, args);
             case "capture" -> cmdCapture(sender, args);
             case "arena" -> cmdArena(sender, args);
+            case "bot" -> cmdBot(sender, args);
+            case "train" -> cmdTrain(sender, args);
             case "status" -> cmdStatus(sender);
             case "tp" -> cmdTeleport(sender);
             case "stop" -> {
@@ -272,6 +279,44 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
             return Integer.parseInt(s);
         } catch (NumberFormatException e) {
             return def;
+        }
+    }
+
+    /** {@code /msf bot [n]} - run one watchable bot episode in arena n. */
+    private void cmdBot(CommandSender sender, String[] args) {
+        if (arenas == null || !arenas.ready() || botTrainer == null) {
+            sender.sendMessage("MineSight: arena world unavailable.");
+            return;
+        }
+        int id = args.length >= 2 ? parseIntOr(args[1], 0) : 0;
+        BotParams params = botTrainer.bestParams();
+        sender.sendMessage("MineSight: running a bot in arena " + id
+                + " (tuned params: " + botTrainer.hasBest() + "). /msf arena tp " + id + " to watch.");
+        botTrainer.runDemo(id, params, r -> sender.sendMessage(String.format(
+                "MineSight: bot done in arena %d - fitness %.1f (%d ore, %d deaths, %d ticks%s)",
+                id, r.fitness(), r.ores(), r.deaths(), r.ticks(), r.cleared() ? ", CLEARED" : "")));
+    }
+
+    /** {@code /msf train <start [n]|stop>} - headless bot training loop. */
+    private void cmdTrain(CommandSender sender, String[] args) {
+        if (botTrainer == null) {
+            sender.sendMessage("MineSight: trainer unavailable.");
+            return;
+        }
+        String sub = args.length >= 2 ? args[1].toLowerCase() : "status";
+        switch (sub) {
+            case "start" -> {
+                int n = args.length >= 3 ? parseIntOr(args[2], 4) : 4;
+                botTrainer.start(n);
+                sender.sendMessage("MineSight: bot training started on " + n
+                        + " arenas. Now run: python -m minesight.evolve");
+            }
+            case "stop" -> {
+                botTrainer.stop();
+                sender.sendMessage("MineSight: bot training stopped.");
+            }
+            default -> sender.sendMessage("MineSight: training "
+                    + (botTrainer.isRunning() ? "running" : "idle") + ". Run dir " + botTrainer.runDir());
         }
     }
 
