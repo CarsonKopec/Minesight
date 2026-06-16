@@ -18,6 +18,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -141,6 +143,53 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
                 sender.sendMessage("MineSight: scan + capture stopped.");
             }
             default -> sender.sendMessage("Unknown subcommand: " + args[0]);
+        }
+    }
+
+    /** Tab-completion: subcommands, then per-subcommand args (ores, arena ids…). */
+    @Override
+    public Collection<String> suggest(@NotNull CommandSourceStack source, @NotNull String[] args) {
+        List<String> out = new ArrayList<>();
+        if (args.length == 1) {
+            out.addAll(List.of("scan", "capture", "arena", "bot", "train", "status", "tp", "stop"));
+        } else if (args.length >= 2) {
+            switch (args[0].toLowerCase()) {
+                case "scan" -> {
+                    if (args.length == 2) {
+                        out.addAll(OreCatalog.labels());
+                    }
+                }
+                case "arena" -> {
+                    if (args.length == 2) {
+                        out.addAll(List.of("tp", "reset", "list"));
+                    } else if (args.length == 3
+                            && (args[1].equalsIgnoreCase("tp") || args[1].equalsIgnoreCase("reset"))) {
+                        addArenaIds(out);
+                    }
+                }
+                case "bot" -> {
+                    if (args.length == 2) {
+                        addArenaIds(out);
+                    }
+                }
+                case "train" -> {
+                    if (args.length == 2) {
+                        out.addAll(List.of("start", "stop"));
+                    }
+                }
+                default -> {
+                }
+            }
+        }
+        String prefix = args[args.length - 1].toLowerCase();
+        out.removeIf(s -> !s.toLowerCase().startsWith(prefix));
+        return out;
+    }
+
+    private void addArenaIds(List<String> out) {
+        int n = arenas != null ? Math.min(arenas.slotCount(), 8) : 8;
+        for (int i = 0; i < n; i++) {
+            out.add(Integer.toString(i));
         }
     }
 
