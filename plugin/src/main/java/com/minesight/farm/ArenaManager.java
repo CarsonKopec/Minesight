@@ -242,26 +242,37 @@ public final class ArenaManager {
         return new int[]{2, CORRIDOR_FLOOR + 1, midZ};
     }
 
-    /** A parkour course: a tall tunnel of 1-block platforms over a deep pit, with
-     *  stone side walls holding the ore - so the agent only reaches each ore by
-     *  leaping the gaps. Returns the spawn (the first platform). */
+    /** A parkour course: stepping platforms floating over a deep pit. The ore
+     *  targets are floating "trophies" above the platforms and an emerald-block
+     *  GOAL at the end - all reachable only by <i>standing on a platform</i>, so
+     *  the agent must jump the gaps rather than dig (there's nothing to dig to).
+     *  Returns the spawn (the first platform). */
     private int[] buildParkour(Material[] layout, List<GroundTruthOre> ores,
                                int ox, int oy, int oz, Random r, int midZ) {
         int y = CORRIDOR_FLOOR;
-        // Hollow a 1-wide tall channel down the middle with a deep pit below.
+        // Hollow an open hall (3 wide) down the middle with a deep pit below and
+        // tall headroom above (room for the trophies + jump arcs).
         for (int lx = 1; lx < W - 1; lx++) {
-            for (int ly = 2; ly <= CORRIDOR_TOP; ly++) {
-                set(layout, lx, ly, midZ, Material.AIR);
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int ly = 2; ly <= CORRIDOR_TOP + 2; ly++) {
+                    set(layout, lx, ly, midZ + dz, Material.AIR);
+                }
             }
+            set(layout, lx, 1, midZ, Material.BEDROCK);   // pit floor - can't dig out
         }
         // Stepping platforms every 2 cells (a 1-block gap to leap between each).
-        int sx = 2;
+        int sx = 2, lastX = sx;
         for (int lx = sx; lx < W - 2; lx += 2) {
             set(layout, lx, y, midZ, Material.STONE);
+            lastX = lx;
         }
-        // Ore embedded in the stone side walls beside the platforms - only
-        // reachable once you've parkoured to that platform.
-        scatterOres(layout, ores, ox, oy, oz, r);
+        // Checkpoint trophies above every 3rd platform (a gradient - reach further,
+        // score more), then the GOAL at the end.
+        for (int lx = sx; lx < lastX; lx += 6) {
+            placeOre(layout, ores, ox, oy, oz, lx, y + 3, midZ, rollOre(r));
+        }
+        set(layout, lastX, y + 3, midZ, Material.EMERALD_BLOCK);   // the goal block
+        ores.add(new GroundTruthOre("emerald_ore", ox + lastX, oy + y + 3, oz + midZ));
         return new int[]{sx, y + 1, midZ};
     }
 
