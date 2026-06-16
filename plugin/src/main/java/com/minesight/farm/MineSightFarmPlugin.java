@@ -150,9 +150,9 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
     @Override
     public Collection<String> suggest(@NotNull CommandSourceStack source, @NotNull String[] args) {
         List<String> out = new ArrayList<>();
-        if (args.length == 1) {
+        if (args.length <= 1) {
             out.addAll(List.of("scan", "capture", "arena", "bot", "train", "status", "tp", "stop"));
-        } else if (args.length >= 2) {
+        } else {
             switch (args[0].toLowerCase()) {
                 case "scan" -> {
                     if (args.length == 2) {
@@ -181,7 +181,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
                 }
             }
         }
-        String prefix = args[args.length - 1].toLowerCase();
+        String prefix = args.length == 0 ? "" : args[args.length - 1].toLowerCase();
         out.removeIf(s -> !s.toLowerCase().startsWith(prefix));
         return out;
     }
