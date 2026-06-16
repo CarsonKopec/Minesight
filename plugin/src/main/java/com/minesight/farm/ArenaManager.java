@@ -185,37 +185,46 @@ public final class ArenaManager {
             }
         }
 
-        // 2. A main corridor down the middle (X), plus a few branches (Z) - open
-        //    air the agent walks, with stone walls to dig into for ore.
+        // 2. Pick a theme so different bots learn different basics - some get a
+        //    pure parkour course, the rest the all-rounder mining cave.
         int midZ = D / 2;
+        String theme;
+        int[] s;
+        if (r.nextInt(100) < 40) {
+            theme = "parkour";
+            s = buildParkour(layout, ores, ox, oy, oz, r, midZ);
+        } else {
+            theme = "mixed";
+            s = buildMixed(layout, ores, ox, oy, oz, r, midZ);
+        }
+
+        Location spawn = new Location(world, ox + s[0] + 0.5, oy + s[1], oz + s[2] + 0.5, 90f, 0f);
+        plugin.getLogger().info("Generated arena " + id + " (" + theme + ") with "
+                + ores.size() + " ore.");
+        return new Arena(id, ox, oy, oz, layout, ores, spawn);
+    }
+
+    /** The all-rounder cave: corridors to walk, ore to dig, lava + a water gap,
+     *  a stairwell, and a parkour run. Returns the spawn (local feet coords). */
+    private int[] buildMixed(Material[] layout, List<GroundTruthOre> ores,
+                             int ox, int oy, int oz, Random r, int midZ) {
         carveCorridorX(layout, 1, W - 2, midZ);
         for (int bx : new int[]{W / 4, W / 2, 3 * W / 4}) {
             carveCorridorZ(layout, bx, 1, D - 2);
         }
-
-        // 3. Hazards on the corridor floor: lava pockets to route around.
-        for (int i = 0; i < 3; i++) {
-            int lx = 4 + r.nextInt(W - 8);
-            set(layout, lx, CORRIDOR_FLOOR, midZ, Material.LAVA);
+        for (int i = 0; i < 3; i++) {                       // lava pockets
+            set(layout, 4 + r.nextInt(W - 8), CORRIDOR_FLOOR, midZ, Material.LAVA);
         }
-
-        // 4. A water gap across the corridor: drop the floor a few blocks and fill
-        //    the bottom with water - the agent must bridge it.
-        int gapX = W / 2 + 3;
+        int gapX = W / 2 + 3;                                // water gap to bridge
         for (int dz = -1; dz <= 0; dz++) {
-            int z = midZ + dz;
-            set(layout, gapX, CORRIDOR_FLOOR, z, Material.AIR);
-            set(layout, gapX, CORRIDOR_FLOOR - 1, z, Material.WATER);
-            set(layout, gapX, CORRIDOR_FLOOR - 2, z, Material.WATER);
+            set(layout, gapX, CORRIDOR_FLOOR, midZ + dz, Material.AIR);
+            set(layout, gapX, CORRIDOR_FLOOR - 1, midZ + dz, Material.WATER);
+            set(layout, gapX, CORRIDOR_FLOOR - 2, midZ + dz, Material.WATER);
         }
-
-        // 5. A descending open stairwell to a diamond (depth: drops + climbs).
-        //    Climbable both ways - a sheer pit would strand the agent.
-        int shaftX = W / 4;
+        int shaftX = W / 4;                                  // climbable stairwell
         int lastZ = 4, lastFy = CORRIDOR_FLOOR - 1;
         for (int i = 0; i < 5; i++) {
-            int z = 4 + i;
-            int fy = CORRIDOR_FLOOR - 1 - i;
+            int z = 4 + i, fy = CORRIDOR_FLOOR - 1 - i;
             if (fy < 1) {
                 break;
             }
@@ -227,22 +236,33 @@ public final class ArenaManager {
             lastFy = fy;
         }
         placeOre(layout, ores, ox, oy, oz, shaftX, lastFy, lastZ + 1, "diamond_ore");
-
-        // 6. A parkour run off a branch: platforms separated by gaps over a pit -
-        //    reach the emerald by jumping, not digging or bridging.
         carveParkour(layout, ores, ox, oy, oz, 3 * W / 4, midZ);
-
-        // 7. Scatter ground-truth ore in stone cells reachable from the carved air.
         scatterOres(layout, ores, ox, oy, oz, r);
-
-        // 8. Spawn: stand at the start of the main corridor.
-        Location spawn = new Location(world, ox + 2 + 0.5, oy + CORRIDOR_FLOOR + 1,
-                oz + midZ + 0.5, 90f, 0f);
         ensureStand(layout, 2, midZ);
+        return new int[]{2, CORRIDOR_FLOOR + 1, midZ};
+    }
 
-        plugin.getLogger().info("Generated arena " + id + " at " + ox + "," + oy + "," + oz
-                + " with " + ores.size() + " ground-truth ore.");
-        return new Arena(id, ox, oy, oz, layout, ores, spawn);
+    /** A parkour course: a tall tunnel of 1-block platforms over a deep pit, with
+     *  stone side walls holding the ore - so the agent only reaches each ore by
+     *  leaping the gaps. Returns the spawn (the first platform). */
+    private int[] buildParkour(Material[] layout, List<GroundTruthOre> ores,
+                               int ox, int oy, int oz, Random r, int midZ) {
+        int y = CORRIDOR_FLOOR;
+        // Hollow a 1-wide tall channel down the middle with a deep pit below.
+        for (int lx = 1; lx < W - 1; lx++) {
+            for (int ly = 2; ly <= CORRIDOR_TOP; ly++) {
+                set(layout, lx, ly, midZ, Material.AIR);
+            }
+        }
+        // Stepping platforms every 2 cells (a 1-block gap to leap between each).
+        int sx = 2;
+        for (int lx = sx; lx < W - 2; lx += 2) {
+            set(layout, lx, y, midZ, Material.STONE);
+        }
+        // Ore embedded in the stone side walls beside the platforms - only
+        // reachable once you've parkoured to that platform.
+        scatterOres(layout, ores, ox, oy, oz, r);
+        return new int[]{sx, y + 1, midZ};
     }
 
     private void carveCorridorX(Material[] layout, int x0, int x1, int z) {
