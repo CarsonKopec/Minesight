@@ -122,7 +122,8 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         CommandSender sender = source.getSender();
         if (args.length == 0) {
             sender.sendMessage("Usage: /minesightfarm <scan <ore> [radius] | capture [count] | "
-                    + "arena <tp|reset|list> [n] | bot [n] | train <start [n]|stop> | status | tp | stop>");
+                    + "arena <tp|reset|list> [n] | bot [n] | botmode <zombie|nms|physics> | "
+                    + "train <start [n]|stop> | status | tp | stop>");
             return;
         }
         switch (args[0].toLowerCase()) {
@@ -130,6 +131,7 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
             case "capture" -> cmdCapture(sender, args);
             case "arena" -> cmdArena(sender, args);
             case "bot" -> cmdBot(sender, args);
+            case "botmode" -> cmdBotMode(sender, args);
             case "train" -> cmdTrain(sender, args);
             case "status" -> cmdStatus(sender);
             case "tp" -> cmdTeleport(sender);
@@ -151,9 +153,15 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
     public Collection<String> suggest(@NotNull CommandSourceStack source, @NotNull String[] args) {
         List<String> out = new ArrayList<>();
         if (args.length <= 1) {
-            out.addAll(List.of("scan", "capture", "arena", "bot", "train", "status", "tp", "stop"));
+            out.addAll(List.of("scan", "capture", "arena", "bot", "botmode", "train",
+                    "status", "tp", "stop"));
         } else {
             switch (args[0].toLowerCase()) {
+                case "botmode" -> {
+                    if (args.length == 2) {
+                        out.addAll(List.of("zombie", "nms", "physics"));
+                    }
+                }
                 case "scan" -> {
                     if (args.length == 2) {
                         out.addAll(OreCatalog.labels());
@@ -344,6 +352,19 @@ public class MineSightFarmPlugin extends JavaPlugin implements PluginMessageList
         botTrainer.runDemo(id, params, r -> sender.sendMessage(String.format(
                 "MineSight: bot done in arena %d - fitness %.1f (%d ore, %d deaths, %d ticks%s)",
                 id, r.fitness(), r.ores(), r.deaths(), r.ticks(), r.cleared() ? ", CLEARED" : "")));
+    }
+
+    /** {@code /msf botmode <zombie|nms|physics>} - choose the bot body. */
+    private void cmdBotMode(CommandSender sender, String[] args) {
+        if (botTrainer == null) {
+            sender.sendMessage("MineSight: trainer unavailable.");
+            return;
+        }
+        if (args.length >= 2) {
+            botTrainer.setBotMode(args[1]);
+        }
+        sender.sendMessage("MineSight: bot mode = " + botTrainer.botMode()
+                + " (zombie | nms | physics). Takes effect on the next episode.");
     }
 
     /** {@code /msf train <start [n]|stop>} - headless bot training loop. */

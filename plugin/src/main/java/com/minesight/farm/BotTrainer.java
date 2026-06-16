@@ -53,11 +53,41 @@ public final class BotTrainer {
     private double bestFitness = Double.NEGATIVE_INFINITY;
     private double maxFitness = -1;
 
+    // "zombie" | "nms" (scripted) | "physics" - selectable at runtime.
+    private volatile String botMode;
+
     public BotTrainer(MineSightFarmPlugin plugin, ArenaManager arenas) {
         this.plugin = plugin;
         this.arenas = arenas;
         this.dir = resolveDir();
         this.budget = envInt("MINESIGHT_EPISODE_TICKS", 3600);
+        this.botMode = initialBotMode();
+    }
+
+    /** Initial mode from the legacy JVM flags, so -D still works as a default. */
+    private static String initialBotMode() {
+        if ("zombie".equalsIgnoreCase(System.getProperty("minesight.bot", "nms"))) {
+            return "zombie";
+        }
+        return "physics".equalsIgnoreCase(System.getProperty("minesight.nmsMove", "scripted"))
+                ? "physics" : "nms";
+    }
+
+    public String botMode() {
+        return botMode;
+    }
+
+    /** Select the bot body for future episodes: zombie / nms (scripted) / physics. */
+    public void setBotMode(String mode) {
+        if (mode == null) {
+            return;
+        }
+        switch (mode.toLowerCase()) {
+            case "zombie", "nms", "physics" -> botMode = mode.toLowerCase();
+            case "scripted" -> botMode = "nms";
+            default -> {
+            }
+        }
     }
 
     public boolean isRunning() {
@@ -119,15 +149,15 @@ public final class BotTrainer {
     }
 
     /**
-     * Bot body. Default is the real NMS ServerPlayer (now that the fake
-     * connection auto-answers keep-alives and stays connected); force the
-     * connection-free Zombie with -Dminesight.bot=zombie.
+     * Bot body for the current {@link #botMode}: connection-free Zombie, a real
+     * NMS ServerPlayer with scripted teleport movement, or one with real physics.
      */
     private BotEpisode makeBot(ArenaManager.Arena arena, BotParams params) {
-        if ("zombie".equalsIgnoreCase(System.getProperty("minesight.bot", "nms"))) {
-            return new ZombieBot(plugin, arena, params, budget);
-        }
-        return new NmsBot(plugin, arena, params, budget);
+        return switch (botMode) {
+            case "zombie" -> new ZombieBot(plugin, arena, params, budget);
+            case "physics" -> new NmsBot(plugin, arena, params, budget, true);
+            default -> new NmsBot(plugin, arena, params, budget, false);   // nms scripted
+        };
     }
 
     /** Whether a tuned best.json export exists to run with (vs. defaults). */

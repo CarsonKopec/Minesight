@@ -39,12 +39,9 @@ import java.util.UUID;
  */
 public final class NmsBot extends BotEpisode {
 
-    // Default: scripted teleport-along-path (stable + verified). Opt into real
-    // impulse physics with -Dminesight.nmsMove=physics (experimental: a
-    // server-authoritative fake player desyncs its stub connection and gets
-    // disconnected, so leave it off until the connection is hardened).
-    private static final boolean PHYSICS =
-            "physics".equalsIgnoreCase(System.getProperty("minesight.nmsMove", "scripted"));
+    // Scripted = teleport-along-path (stable + verified). Physics = real impulse
+    // movement (experimental). Selected per run from the GUI / command.
+    private final boolean physics;
 
     private ServerPlayer player;
     private double lastX, lastZ;
@@ -52,8 +49,10 @@ public final class NmsBot extends BotEpisode {
     private boolean stuck;
     private boolean jumpMove;
 
-    public NmsBot(JavaPlugin plugin, ArenaManager.Arena arena, BotParams params, int budget) {
+    public NmsBot(JavaPlugin plugin, ArenaManager.Arena arena, BotParams params, int budget,
+                  boolean physics) {
         super(plugin, arena, params, budget);
+        this.physics = physics;
     }
 
     @Override
@@ -64,7 +63,7 @@ public final class NmsBot extends BotEpisode {
         // Plain ServerPlayer (client-authoritative) for scripted movement - it
         // stays connected. Only physics mode needs the server-authoritative
         // BotServerPlayer, which trades stability for real walking.
-        ServerPlayer p = PHYSICS
+        ServerPlayer p = physics
                 ? new BotServerPlayer(server, level, profile)
                 : new ServerPlayer(server, level, profile, ClientInformation.createDefault());
         p.setPos(pos.x() + 0.5, pos.y(), pos.z() + 0.5);
@@ -119,7 +118,7 @@ public final class NmsBot extends BotEpisode {
         if (player == null) {
             return true;
         }
-        if (!PHYSICS) {
+        if (!physics) {
             moveBody(target);     // scripted teleport (verified-working fallback)
             return true;
         }

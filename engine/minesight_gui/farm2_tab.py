@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -143,6 +144,23 @@ class Farm2Tab(QWidget):
                                   value=int(self.settings.value("farm2/genCount", 40)))
         self.gen_count.setToolTip("CMA-ES generations to run.")
         trow.addWidget(self.gen_count)
+        trow.addWidget(QLabel("Bot:"))
+        self.bot_mode = QComboBox()
+        # (label, mode sent to /msf botmode)
+        self._bot_modes = [
+            ("Zombie", "zombie"),
+            ("NMS (scripted)", "nms"),
+            ("NMS (physics)", "physics"),
+        ]
+        for label, _mode in self._bot_modes:
+            self.bot_mode.addItem(label)
+        self.bot_mode.setCurrentIndex(int(self.settings.value("farm2/botMode", 1)))
+        self.bot_mode.setToolTip(
+            "Bot body: Zombie (rock-solid, teleport movement), NMS scripted (real\n"
+            "player, teleport), or NMS physics (real player that walks/jumps - "
+            "experimental)."
+        )
+        trow.addWidget(self.bot_mode)
         self.train_bots_btn = QPushButton("▶ Train (bots)")
         self.train_bots_btn.setToolTip(
             "Headless server-side bots: starts the in-arena training loop on the\n"
@@ -322,7 +340,10 @@ class Farm2Tab(QWidget):
         # than that the extras would sit idle with nothing to evaluate. Size the
         # population to the arena count (min 12) so every arena stays busy.
         pop = max(n, 12)
+        mode = self._selected_bot_mode()
+        self.server_proc.send(f"msf botmode {mode}")
         self.server_proc.send(f"msf train start {n}")
+        self.log.append_line(f"$ msf botmode {mode}")
         self.log.append_line(f"$ msf train start {n}  (server console)")
         self.log.append_line(f"$ python -m minesight.evolve --gens {g} --popsize {pop}")
         self.train_proc.start(
@@ -349,8 +370,13 @@ class Farm2Tab(QWidget):
         if not self.server_proc.running:
             self.log.append_line("[start the server first, then Run one bot]")
             return
+        mode = self._selected_bot_mode()
+        self.server_proc.send(f"msf botmode {mode}")
         self.server_proc.send("msf bot 0")
-        self.log.append_line("$ msf bot 0  (server console) - /msf arena tp 0 to watch")
+        self.log.append_line(f"$ msf botmode {mode}; msf bot 0  - /msf arena tp 0 to watch")
+
+    def _selected_bot_mode(self) -> str:
+        return self._bot_modes[self.bot_mode.currentIndex()][1]
 
     def stop_training(self) -> None:
         if self.server_proc.running:
@@ -366,6 +392,7 @@ class Farm2Tab(QWidget):
     def _save_train_settings(self) -> None:
         self.settings.setValue("farm2/arenaCount", self.arena_count.value())
         self.settings.setValue("farm2/genCount", self.gen_count.value())
+        self.settings.setValue("farm2/botMode", self.bot_mode.currentIndex())
 
     # --- helpers --------------------------------------------------------------
 
