@@ -6,6 +6,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.CommonListenerCookie;
@@ -33,10 +34,12 @@ import java.util.UUID;
  */
 public final class NmsBot extends BotEpisode {
 
-    // Default: drive the player with real movement impulses (server physics).
-    // -Dminesight.nmsMove=scripted falls back to teleport-along-path (verified).
+    // Default: scripted teleport-along-path (stable + verified). Opt into real
+    // impulse physics with -Dminesight.nmsMove=physics (experimental: a
+    // server-authoritative fake player desyncs its stub connection and gets
+    // disconnected, so leave it off until the connection is hardened).
     private static final boolean PHYSICS =
-            !"scripted".equalsIgnoreCase(System.getProperty("minesight.nmsMove", "physics"));
+            "physics".equalsIgnoreCase(System.getProperty("minesight.nmsMove", "scripted"));
 
     private ServerPlayer player;
     private double lastX, lastZ;
@@ -52,9 +55,12 @@ public final class NmsBot extends BotEpisode {
         MinecraftServer server = ((CraftServer) Bukkit.getServer()).getServer();
         ServerLevel level = ((CraftWorld) world).getHandle();
         GameProfile profile = new GameProfile(UUID.randomUUID(), name);
-        // BotServerPlayer (not a plain ServerPlayer) so the server moves it
-        // server-authoritatively from our impulse input.
-        BotServerPlayer p = new BotServerPlayer(server, level, profile);
+        // Plain ServerPlayer (client-authoritative) for scripted movement - it
+        // stays connected. Only physics mode needs the server-authoritative
+        // BotServerPlayer, which trades stability for real walking.
+        ServerPlayer p = PHYSICS
+                ? new BotServerPlayer(server, level, profile)
+                : new ServerPlayer(server, level, profile, ClientInformation.createDefault());
         p.setPos(pos.x() + 0.5, pos.y(), pos.z() + 0.5);
         p.setGlowingTag(true);   // glowing outline - watch the bot through walls
 

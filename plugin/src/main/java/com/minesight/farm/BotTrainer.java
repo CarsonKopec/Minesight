@@ -96,12 +96,17 @@ public final class BotTrainer {
         runEpisode(arenaId, params, "MineBot demo", onResult);
     }
 
-    /** Bot body: real NMS ServerPlayer by default, Zombie via -Dminesight.bot=zombie. */
+    /**
+     * Bot body. Default is the reliable Zombie (no player connection, so no
+     * join/leave churn); opt into the real NMS ServerPlayer with
+     * -Dminesight.bot=nms (real vanilla mining + a real player to spectate, but
+     * the fake-player connection is less stable).
+     */
     private BotEpisode makeBot(ArenaManager.Arena arena, BotParams params) {
-        if ("zombie".equalsIgnoreCase(System.getProperty("minesight.bot", "nms"))) {
-            return new ZombieBot(plugin, arena, params, budget);
+        if ("nms".equalsIgnoreCase(System.getProperty("minesight.bot", "zombie"))) {
+            return new NmsBot(plugin, arena, params, budget);
         }
-        return new NmsBot(plugin, arena, params, budget);
+        return new ZombieBot(plugin, arena, params, budget);
     }
 
     /** Whether a tuned best.json export exists to run with (vs. defaults). */
