@@ -31,4 +31,17 @@ public final class BotServerPlayer extends ServerPlayer {
     public boolean isClientAuthoritative() {
         return false;
     }
+
+    /**
+     * Never immobile. {@code ServerPlayer.isImmobile()} returns true when the
+     * connection reports disconnected, and our stub connection does (the channel
+     * is open but the protocol handshake never completed). aiStep() reacts by
+     * zeroing the movement input (jumping/xxa/zza), which is exactly why physics
+     * movement did nothing while scripted setPos still worked. Forcing this false
+     * lets the server actually travel the bot from our impulses.
+     */
+    @Override
+    public boolean isImmobile() {
+        return false;
+    }
 }
