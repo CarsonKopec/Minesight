@@ -1,11 +1,17 @@
 package com.minesight.farm;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.Bukkit;
 import org.bukkit.World;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
+import org.bukkit.entity.Player;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -43,6 +49,10 @@ public final class BotTrainer {
     private final List<ScheduledTask> tasks = new ArrayList<>();
     private final List<BotEpisode> bots = new ArrayList<>();
 
+    private BossBar bossBar;
+    private double bestFitness = Double.NEGATIVE_INFINITY;
+    private double maxFitness = -1;
+
     public BotTrainer(MineSightFarmPlugin plugin, ArenaManager arenas) {
         this.plugin = plugin;
         this.arenas = arenas;
@@ -72,10 +82,18 @@ public final class BotTrainer {
         running = true;
         slots = Math.max(1, Math.min(n, arenas.slotCount()));
         claimed.clear();
+        bestFitness = Double.NEGATIVE_INFINITY;
+        maxFitness = maxFitnessOf(arenas.arena(0));
+        bossBar = Bukkit.createBossBar("⛏ MineSight training", BarColor.GREEN, BarStyle.SEGMENTED_10);
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            bossBar.addPlayer(p);
+        }
+        updateBossBar();
         for (int id = 0; id < slots; id++) {
             launchNext(id);
         }
-        plugin.getLogger().info("Bot training started across " + slots + " arenas; run dir " + dir);
+        plugin.getComponentLogger().info(Component.text(
+                "▶ Bot training started across " + slots + " arenas", NamedTextColor.AQUA));
     }
 
     public void stop() {
@@ -88,7 +106,11 @@ public final class BotTrainer {
             b.cleanup();
         }
         bots.clear();
-        plugin.getLogger().info("Bot training stopped.");
+        if (bossBar != null) {
+            bossBar.removeAll();
+            bossBar = null;
+        }
+        plugin.getComponentLogger().info(Component.text("■ Bot training stopped", NamedTextColor.GOLD));
     }
 
     /** Run a single watchable episode in one arena (for {@code /msf bot}). */
@@ -139,16 +161,47 @@ public final class BotTrainer {
         }
         runEpisode(slot, c.params, "MineBot#" + slot, result -> {
             writeTell(c.id, result);
-            plugin.getLogger().info(String.format("train: %s arena %d -> fitness %.1f (%d/%d ore, %d deaths)",
-                    c.id, slot, result.fitness(), result.ores(), totalOf(slot), result.deaths()));
+            if (result.fitness() > bestFitness) {
+                bestFitness = result.fitness();
+            }
+            updateBossBar();
             if (running) {
                 launchNext(slot);
             }
         });
     }
 
-    private int totalOf(int slot) {
-        return arenas.arena(slot).ores().size();
+    /** Live boss bar: best fitness so far as a % of the per-episode maximum. */
+    private void updateBossBar() {
+        if (bossBar == null) {
+            return;
+        }
+        boolean haveBest = bestFitness > Double.NEGATIVE_INFINITY;
+        double best = haveBest ? bestFitness : 0.0;
+        double frac = maxFitness > 0 && haveBest
+                ? Math.max(0.0, Math.min(1.0, best / maxFitness)) : 0.0;
+        int pct = (int) Math.round(frac * 100);
+        plugin.getServer().getGlobalRegionScheduler().execute(plugin, () -> {
+            if (bossBar == null) {
+                return;
+            }
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                bossBar.addPlayer(p);   // catch spectators who joined after start
+            }
+            bossBar.setProgress(frac);
+            bossBar.setTitle(String.format(
+                    "⛏ MineSight — best fitness %.1f (%d%%) · gen %d", best, pct, lastGen));
+        });
+    }
+
+    /** The best fitness an arena allows: every ore + the finish-fast bonus. */
+    private double maxFitnessOf(ArenaManager.Arena arena) {
+        double m = 20.0;   // BotEpisode.SPEED_WEIGHT, awarded for an instant clear
+        for (ArenaManager.GroundTruthOre o : arena.ores()) {
+            String l = o.label();
+            m += (l.contains("diamond") || l.contains("emerald")) ? 8.0 : 1.0;
+        }
+        return m;
     }
 
     private void runEpisode(int arenaId, BotParams params, String name,
@@ -170,6 +223,8 @@ public final class BotTrainer {
             }
             final BotEpisode runBot = bot;
             bots.add(runBot);
+            plugin.getComponentLogger().info(Component.text(
+                    "  ▸ " + name + " logged in (arena " + arenaId + ")", NamedTextColor.GREEN));
             ScheduledTask task = plugin.getServer().getRegionScheduler().runAtFixedRate(
                     plugin, w, cx, cz, t -> {
                         runBot.tick();
@@ -179,6 +234,11 @@ public final class BotTrainer {
                             BotEpisode.Result r = runBot.result();
                             runBot.cleanup();
                             bots.remove(runBot);
+                            plugin.getComponentLogger().info(Component.text(String.format(
+                                    "  ◂ %s logged out (arena %d) — fitness %.1f, %d/%d ore, %d deaths%s",
+                                    name, arenaId, r.fitness(), r.ores(), arena.ores().size(),
+                                    r.deaths(), r.cleared() ? ", CLEARED" : ""),
+                                    r.cleared() ? NamedTextColor.LIGHT_PURPLE : NamedTextColor.YELLOW));
                             onResult.accept(r);
                         }
                     }, 1L, 1L);

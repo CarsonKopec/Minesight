@@ -125,6 +125,7 @@ public final class ArenaManager {
         world.setGameRule(GameRule.DO_FIRE_TICK, false);
         world.setGameRule(GameRule.RANDOM_TICK_SPEED, 0);
         world.setGameRule(GameRule.FALL_DAMAGE, true);   // falling IS a hazard to learn
+        world.setGameRule(GameRule.ANNOUNCE_ADVANCEMENTS, false);  // no bot achievement spam
         world.setTime(6000);
         plugin.getLogger().info("Arena world '" + WORLD + "' ready (" + GRID * GRID + " slots).");
     }
