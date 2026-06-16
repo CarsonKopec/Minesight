@@ -52,7 +52,10 @@ public final class ArenaManager {
     static final long SEED_BASE = 0x6D696E65L;  // "mine"
 
     private static final int ORE_COUNT = 14;
-    private static final int CORRIDOR_FLOOR = 2;     // local Y of the corridor floor
+    private static final int CORRIDOR_FLOOR = 8;     // local Y of the corridor floor (mid-height)
+    // 4-tall corridors: the pathfinder's step-up/parkour moves need headroom to
+    // "jump", so a 2-tall tunnel is a one-way drop the agent can't climb out of.
+    private static final int CORRIDOR_TOP = CORRIDOR_FLOOR + 4;
 
     /** A ground-truth ore block: world coords + dataset label. */
     public record GroundTruthOre(String label, int x, int y, int z) {
@@ -197,18 +200,33 @@ public final class ArenaManager {
             set(layout, gapX, CORRIDOR_FLOOR - 2, z, Material.WATER);
         }
 
-        // 5. A drop shaft on a branch with an ore at the bottom (depth: dig-down + climb).
+        // 5. A descending open stairwell to a diamond (depth: drops + climbs).
+        //    Climbable both ways - a sheer pit would strand the agent.
         int shaftX = W / 4;
-        for (int dy = 0; dy < 4; dy++) {
-            set(layout, shaftX, CORRIDOR_FLOOR - dy, 3, Material.AIR);
-            set(layout, shaftX, CORRIDOR_FLOOR + 1 - dy, 3, Material.AIR);
+        int lastZ = 4, lastFy = CORRIDOR_FLOOR - 1;
+        for (int i = 0; i < 5; i++) {
+            int z = 4 + i;
+            int fy = CORRIDOR_FLOOR - 1 - i;
+            if (fy < 1) {
+                break;
+            }
+            set(layout, shaftX, fy, z, Material.STONE);
+            for (int yy = fy + 1; yy <= CORRIDOR_TOP; yy++) {
+                set(layout, shaftX, yy, z, Material.AIR);
+            }
+            lastZ = z;
+            lastFy = fy;
         }
-        placeOre(layout, ores, ox, oy, oz, shaftX, CORRIDOR_FLOOR - 3, 2, "diamond_ore");
+        placeOre(layout, ores, ox, oy, oz, shaftX, lastFy, lastZ + 1, "diamond_ore");
 
-        // 6. Scatter ground-truth ore in stone cells reachable from the carved air.
+        // 6. A parkour run off a branch: platforms separated by gaps over a pit -
+        //    reach the emerald by jumping, not digging or bridging.
+        carveParkour(layout, ores, ox, oy, oz, 3 * W / 4, midZ);
+
+        // 7. Scatter ground-truth ore in stone cells reachable from the carved air.
         scatterOres(layout, ores, ox, oy, oz, r);
 
-        // 7. Spawn: stand at the start of the main corridor.
+        // 8. Spawn: stand at the start of the main corridor.
         Location spawn = new Location(world, ox + 2 + 0.5, oy + CORRIDOR_FLOOR + 1,
                 oz + midZ + 0.5, 90f, 0f);
         ensureStand(layout, 2, midZ);
@@ -221,10 +239,8 @@ public final class ArenaManager {
     private void carveCorridorX(Material[] layout, int x0, int x1, int z) {
         for (int x = x0; x <= x1; x++) {
             for (int dz = -1; dz <= 0; dz++) {
-                set(layout, x, CORRIDOR_FLOOR + 1, z + dz, Material.AIR);
-                set(layout, x, CORRIDOR_FLOOR + 2, z + dz, Material.AIR);
-                if (get(layout, x, CORRIDOR_FLOOR, z + dz) == Material.STONE) {
-                    set(layout, x, CORRIDOR_FLOOR, z + dz, Material.STONE);  // keep floor solid
+                for (int yy = CORRIDOR_FLOOR + 1; yy <= CORRIDOR_TOP; yy++) {
+                    set(layout, x, yy, z + dz, Material.AIR);
                 }
             }
         }
@@ -232,16 +248,46 @@ public final class ArenaManager {
 
     private void carveCorridorZ(Material[] layout, int x, int z0, int z1) {
         for (int z = z0; z <= z1; z++) {
-            set(layout, x, CORRIDOR_FLOOR + 1, z, Material.AIR);
-            set(layout, x, CORRIDOR_FLOOR + 2, z, Material.AIR);
+            for (int yy = CORRIDOR_FLOOR + 1; yy <= CORRIDOR_TOP; yy++) {
+                set(layout, x, yy, z, Material.AIR);
+            }
+        }
+    }
+
+    /** Turn part of a branch into a parkour run: 1-wide platforms separated by
+     *  floorless gaps over a pit, with an emerald past the final jump. */
+    private void carveParkour(Material[] layout, List<GroundTruthOre> ores,
+                              int ox, int oy, int oz, int parX, int startZ) {
+        int lastZ = startZ;
+        int z = startZ + 2;
+        for (int i = 0; i < 5 && z < D - 3; i++) {
+            // Platform: solid floor + headroom (standable).
+            set(layout, parX, CORRIDOR_FLOOR, z, Material.STONE);
+            for (int yy = CORRIDOR_FLOOR + 1; yy <= CORRIDOR_TOP; yy++) {
+                set(layout, parX, yy, z, Material.AIR);
+            }
+            lastZ = z;
+            // Gap to the next platform: a floorless pit you must leap.
+            if (i < 4) {
+                int gz = z + 1;
+                for (int dy = -3; dy <= CORRIDOR_TOP - CORRIDOR_FLOOR; dy++) {
+                    set(layout, parX, CORRIDOR_FLOOR + dy, gz, Material.AIR);
+                }
+            }
+            z += 2;
+        }
+        // Emerald in the wall beside the final platform - the parkour reward.
+        if (parX + 1 < W - 1) {
+            placeOre(layout, ores, ox, oy, oz, parX + 1, CORRIDOR_FLOOR + 1, lastZ, "emerald_ore");
         }
     }
 
     /** Ensure a standable air pocket with solid floor at this column. */
     private void ensureStand(Material[] layout, int lx, int lz) {
         set(layout, lx, CORRIDOR_FLOOR, lz, Material.STONE);
-        set(layout, lx, CORRIDOR_FLOOR + 1, lz, Material.AIR);
-        set(layout, lx, CORRIDOR_FLOOR + 2, lz, Material.AIR);
+        for (int yy = CORRIDOR_FLOOR + 1; yy <= CORRIDOR_TOP; yy++) {
+            set(layout, lx, yy, lz, Material.AIR);
+        }
     }
 
     /** Place ores in stone cells that sit within 2 blocks of carved air (so the

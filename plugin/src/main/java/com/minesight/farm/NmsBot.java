@@ -1,10 +1,15 @@
 package com.minesight.farm;
 
 import com.mojang.authlib.GameProfile;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPromise;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.ClientboundKeepAlivePacket;
+import net.minecraft.network.protocol.common.ServerboundKeepAlivePacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
@@ -45,6 +50,7 @@ public final class NmsBot extends BotEpisode {
     private double lastX, lastZ;
     private int stuckTicks;
     private boolean stuck;
+    private boolean jumpMove;
 
     public NmsBot(JavaPlugin plugin, ArenaManager.Arena arena, BotParams params, int budget) {
         super(plugin, arena, params, budget);
@@ -65,9 +71,22 @@ public final class NmsBot extends BotEpisode {
         p.setGlowingTag(true);   // glowing outline - watch the bot through walls
 
         // A fake connection with an embedded (loopback) channel so the player
-        // can be "placed" without a real client behind it.
+        // can be "placed" without a real client behind it. We auto-answer the
+        // server's keep-alive packets (a clientless player would otherwise be
+        // timed out and disconnected), which is what was causing the bot to
+        // vanish and the training loop to re-spawn it (join/leave churn).
         Connection connection = new Connection(PacketFlow.SERVERBOUND);
-        new EmbeddedChannel(connection);
+        EmbeddedChannel channel = new EmbeddedChannel(connection);
+        channel.pipeline().addFirst("minesight_keepalive", new ChannelOutboundHandlerAdapter() {
+            @Override
+            public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise)
+                    throws Exception {
+                if (msg instanceof ClientboundKeepAlivePacket ka) {
+                    channel.writeInbound(new ServerboundKeepAlivePacket(ka.getId()));
+                }
+                super.write(ctx, msg, promise);
+            }
+        });
         server.getPlayerList().placeNewPlayer(connection, p,
                 CommonListenerCookie.createInitial(profile, false));
 
@@ -87,6 +106,8 @@ public final class NmsBot extends BotEpisode {
     protected void startMove(BotPos target) {
         stuck = false;
         stuckTicks = 0;
+        // A waypoint ~2 cells away (parkour leap) needs a running jump.
+        jumpMove = Math.hypot(target.x() - pos.x(), target.z() - pos.z()) > 1.5;
         if (player != null) {
             lastX = player.getX();
             lastZ = player.getZ();
@@ -119,7 +140,10 @@ public final class NmsBot extends BotEpisode {
         player.zza = 1.0f;                                   // forward impulse
         player.setSprinting(pos.dist(goal) > params.sprintDist);
         boolean stepUp = target.y() > Math.floor(py) + 0.01;
-        player.setJumping(stepUp || player.horizontalCollision);
+        player.setJumping(stepUp || player.horizontalCollision || jumpMove);
+        if (jumpMove) {
+            player.setSprinting(true);   // a running jump clears the gap
+        }
         // Stuck detection - the movement-feel knobs the sim/zombie can't tune.
         if (++stuckTicks >= params.stuckWindow) {
             double moved = Math.hypot(px - lastX, pz - lastZ);

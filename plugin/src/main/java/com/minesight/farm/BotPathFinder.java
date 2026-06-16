@@ -24,6 +24,8 @@ import java.util.PriorityQueue;
 public final class BotPathFinder {
 
     private static final int MAX_EXPANSIONS = 20000;
+    /** Cost of a parkour leap - cheap enough to prefer jumping a gap over bridging it. */
+    private static final double JUMP_COST = 3.0;
 
     private final World world;
     private final BotPos min;
@@ -119,6 +121,14 @@ public final class BotPathFinder {
                     && !solidGround(flat.down()) && solid(pos.down())) {
                 out.add(flat);  // bridge (bot always has building blocks)
             }
+            // Parkour leap: jump a 1-block gap (cardinal) to a platform 2 cells
+            // away, when the cell between is a floorless hole and the arc is clear.
+            if (!diagonal && clear(flat) && !solidGround(flat.down()) && clear(pos.up().up())) {
+                BotPos land = pos.add(2 * dx, 0, 2 * dz);
+                if (inBounds(land) && standable(land)) {
+                    out.add(land);
+                }
+            }
         }
         if (mineable(pos.down()) && solidGround(pos.add(0, -2, 0))) {
             out.add(pos.down());
@@ -159,6 +169,10 @@ public final class BotPathFinder {
         }
         if (lavaAdjacent(to)) {
             c += p.lavaNearCost;
+        }
+        // A 2-cell cardinal move is a parkour leap (cheaper than bridging the gap).
+        if (!diagonal && Math.abs(to.x() - from.x()) + Math.abs(to.z() - from.z()) >= 2) {
+            c += JUMP_COST;
         }
         return c;
     }
