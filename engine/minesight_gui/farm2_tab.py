@@ -314,11 +314,18 @@ class Farm2Tab(QWidget):
         self._save_train_settings()
         n = self.arena_count.value()
         g = self.gen_count.value()
+        # CMA-ES asks ~11 candidates/generation by default, so with more arenas
+        # than that the extras would sit idle with nothing to evaluate. Size the
+        # population to the arena count (min 12) so every arena stays busy.
+        pop = max(n, 12)
         self.server_proc.send(f"msf train start {n}")
         self.log.append_line(f"$ msf train start {n}  (server console)")
-        self.log.append_line(f"$ python -m minesight.evolve --gens {g}")
-        self.train_proc.start(PYTHON, ["-m", "minesight.evolve", "--gens", str(g)], str(ENGINE_DIR))
-        log.info("farm2: bot training started (arenas=%d gens=%d)", n, g)
+        self.log.append_line(f"$ python -m minesight.evolve --gens {g} --popsize {pop}")
+        self.train_proc.start(
+            PYTHON, ["-m", "minesight.evolve", "--gens", str(g), "--popsize", str(pop)],
+            str(ENGINE_DIR),
+        )
+        log.info("farm2: bot training started (arenas=%d gens=%d popsize=%d)", n, g, pop)
         self._update_state()
 
     def train_sim(self) -> None:
