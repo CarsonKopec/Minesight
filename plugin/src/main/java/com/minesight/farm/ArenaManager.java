@@ -48,7 +48,8 @@ public final class ArenaManager {
     static final int W = 32, H = 18, D = 32;
     static final int FLOOR_Y = 60;          // world Y of the arena's bedrock floor
     static final int SPACING = 48;          // gap between arena origins (> W, so no overlap)
-    static final int GRID = 6;              // GRID x GRID = up to 36 arenas
+    static final int GRID = 32;             // GRID x GRID = up to 1024 arena slots
+                                            // (lazily generated, so unused slots cost nothing)
     static final long SEED_BASE = 0x6D696E65L;  // "mine"
 
     private static final int ORE_COUNT = 14;

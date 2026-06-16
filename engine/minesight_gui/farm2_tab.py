@@ -130,9 +130,13 @@ class Farm2Tab(QWidget):
         train = QGroupBox("Headless training (CMA-ES auto-tuner)")
         trow = QHBoxLayout(train)
         trow.addWidget(QLabel("Arenas:"))
-        self.arena_count = QSpinBox(minimum=1, maximum=36,
+        self.arena_count = QSpinBox(minimum=1, maximum=999,
                                     value=int(self.settings.value("farm2/arenaCount", 4)))
-        self.arena_count.setToolTip("Bots training in parallel, one per arena (/msf train start N).")
+        self.arena_count.setToolTip(
+            "Bots training in parallel, one per arena (/msf train start N). Up to "
+            "1024 slots exist; each bot pathfinds every tick, so a single server "
+            "tops out well before 999 - boost /tick rate or use a real Folia jar."
+        )
         trow.addWidget(self.arena_count)
         trow.addWidget(QLabel("Gens:"))
         self.gen_count = QSpinBox(minimum=1, maximum=100000,
