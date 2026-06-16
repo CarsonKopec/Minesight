@@ -147,7 +147,14 @@ public final class ArenaManager {
 
     /** Get (lazily generating) the arena with this id. */
     public synchronized Arena arena(int id) {
-        return arenas.computeIfAbsent(id, this::generate);
+        return arenas.computeIfAbsent(id, k -> generate(k, SEED_BASE + k));
+    }
+
+    /** Regenerate a slot with a fresh random layout (a new arena every episode). */
+    public synchronized Arena fresh(int id) {
+        Arena a = generate(id, java.util.concurrent.ThreadLocalRandom.current().nextLong());
+        arenas.put(id, a);
+        return a;
     }
 
     public int assignedId(UUID client) {
@@ -157,7 +164,7 @@ public final class ArenaManager {
 
     // -- generation (pure: no world access) --------------------------------
 
-    private Arena generate(int id) {
+    private Arena generate(int id, long seed) {
         int col = id % GRID;
         int row = id / GRID;
         int ox = col * SPACING;
@@ -165,7 +172,7 @@ public final class ArenaManager {
         int oy = FLOOR_Y;
         Material[] layout = new Material[W * H * D];
         List<GroundTruthOre> ores = new ArrayList<>();
-        Random r = new Random(SEED_BASE + id);
+        Random r = new Random(seed);
 
         // 1. Solid stone fill inside a bedrock shell.
         for (int lx = 0; lx < W; lx++) {
@@ -292,26 +299,52 @@ public final class ArenaManager {
         }
     }
 
-    /** Place ores in stone cells that sit within 2 blocks of carved air (so the
-     *  agent can always dig to them). Labels weighted toward common ore. */
+    /** Embed ore in stone walls directly beside standable cells, so the agent
+     *  can stand in the open passage and reach every ore with a single dig -
+     *  no ore ends up walled off where it can't be pathed to. */
     private void scatterOres(Material[] layout, List<GroundTruthOre> ores,
                              int ox, int oy, int oz, Random r) {
-        List<int[]> candidates = new ArrayList<>();
+        List<int[]> stands = new ArrayList<>();
         for (int lx = 2; lx < W - 2; lx++) {
-            for (int ly = 1; ly < H - 1; ly++) {
+            for (int ly = 1; ly < H - 2; ly++) {
                 for (int lz = 2; lz < D - 2; lz++) {
-                    if (get(layout, lx, ly, lz) == Material.STONE && nearAir(layout, lx, ly, lz)) {
-                        candidates.add(new int[]{lx, ly, lz});
+                    if (standableLocal(layout, lx, ly, lz)) {
+                        stands.add(new int[]{lx, ly, lz});
                     }
                 }
             }
         }
-        Collections.shuffle(candidates, r);
-        int n = Math.min(ORE_COUNT, candidates.size());
-        for (int i = 0; i < n; i++) {
-            int[] c = candidates.get(i);
-            placeOre(layout, ores, ox, oy, oz, c[0], c[1], c[2], rollOre(r));
+        Collections.shuffle(stands, r);
+        int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        int placed = 0;
+        for (int[] s : stands) {
+            if (placed >= ORE_COUNT) {
+                break;
+            }
+            // A stone wall block at feet or head level next to where it stands.
+            for (int yo = 0; yo <= 1 && placed < ORE_COUNT; yo++) {
+                for (int[] d : dirs) {
+                    int wx = s[0] + d[0], wy = s[1] + yo, wz = s[2] + d[1];
+                    if (get(layout, wx, wy, wz) == Material.STONE) {
+                        placeOre(layout, ores, ox, oy, oz, wx, wy, wz, rollOre(r));
+                        placed++;
+                        break;
+                    }
+                }
+            }
         }
+    }
+
+    /** A cell the agent can occupy in the layout: air for feet + head, solid floor. */
+    private boolean standableLocal(Material[] layout, int lx, int ly, int lz) {
+        return get(layout, lx, ly, lz) == Material.AIR
+                && get(layout, lx, ly + 1, lz) == Material.AIR
+                && isWall(get(layout, lx, ly - 1, lz));
+    }
+
+    private static boolean isWall(Material m) {
+        return m == Material.STONE || m == Material.BEDROCK || m == Material.COBBLESTONE
+                || (m != null && m.name().endsWith("_ORE"));
     }
 
     /** Weighted ore label: mostly common, occasionally rare. */
@@ -347,21 +380,6 @@ public final class ArenaManager {
         };
     }
 
-    private boolean nearAir(Material[] layout, int lx, int ly, int lz) {
-        for (int dx = -2; dx <= 2; dx++) {
-            for (int dy = -2; dy <= 2; dy++) {
-                for (int dz = -2; dz <= 2; dz++) {
-                    if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 2) {
-                        continue;
-                    }
-                    if (get(layout, lx + dx, ly + dy, lz + dz) == Material.AIR) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
 
     // -- world stamping (reset) --------------------------------------------
 

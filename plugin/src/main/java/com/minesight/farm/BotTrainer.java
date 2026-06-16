@@ -93,7 +93,7 @@ public final class BotTrainer {
             launchNext(id);
         }
         plugin.getComponentLogger().info(Component.text(
-                "▶ Bot training started across " + slots + " arenas", NamedTextColor.AQUA));
+                ">> Bot training started across " + slots + " arenas", NamedTextColor.AQUA));
     }
 
     public void stop() {
@@ -110,7 +110,7 @@ public final class BotTrainer {
             bossBar.removeAll();
             bossBar = null;
         }
-        plugin.getComponentLogger().info(Component.text("■ Bot training stopped", NamedTextColor.GOLD));
+        plugin.getComponentLogger().info(Component.text("[x] Bot training stopped", NamedTextColor.GOLD));
     }
 
     /** Run a single watchable episode in one arena (for {@code /msf bot}). */
@@ -206,7 +206,8 @@ public final class BotTrainer {
 
     private void runEpisode(int arenaId, BotParams params, String name,
                             Consumer<BotEpisode.Result> onResult) {
-        ArenaManager.Arena arena = arenas.arena(arenaId);
+        // A brand-new random layout every episode (different each bot restart).
+        ArenaManager.Arena arena = arenas.fresh(arenaId);
         World w = arena.spawn().getWorld();
         int cx = (arena.ox + ArenaManager.W / 2) >> 4;
         int cz = (arena.oz + ArenaManager.D / 2) >> 4;
@@ -224,7 +225,7 @@ public final class BotTrainer {
             final BotEpisode runBot = bot;
             bots.add(runBot);
             plugin.getComponentLogger().info(Component.text(
-                    "  ▸ " + name + " logged in (arena " + arenaId + ")", NamedTextColor.GREEN));
+                    "  [+] " + name + " logged in (arena " + arenaId + ")", NamedTextColor.GREEN));
             ScheduledTask task = plugin.getServer().getRegionScheduler().runAtFixedRate(
                     plugin, w, cx, cz, t -> {
                         runBot.tick();
@@ -235,7 +236,7 @@ public final class BotTrainer {
                             runBot.cleanup();
                             bots.remove(runBot);
                             plugin.getComponentLogger().info(Component.text(String.format(
-                                    "  ◂ %s logged out (arena %d) — fitness %.1f, %d/%d ore, %d deaths%s",
+                                    "  [-] %s logged out (arena %d) - fitness %.1f, %d/%d ore, %d deaths%s",
                                     name, arenaId, r.fitness(), r.ores(), arena.ores().size(),
                                     r.deaths(), r.cleared() ? ", CLEARED" : ""),
                                     r.cleared() ? NamedTextColor.LIGHT_PURPLE : NamedTextColor.YELLOW));
