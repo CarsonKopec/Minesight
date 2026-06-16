@@ -343,6 +343,22 @@ public final class ArenaManager {
     }
 
     private void stampChunk(Arena a, int cx, int cz) {
+        // Complete reset: clear out everything the last episode left behind in
+        // this chunk (dropped items from mining, stray mobs, a leftover bot)
+        // before rebuilding the blocks, so each episode starts identical.
+        for (org.bukkit.entity.Entity e : world.getChunkAt(cx, cz).getEntities()) {
+            if (e instanceof org.bukkit.entity.Player) {
+                continue;   // never remove a spectator
+            }
+            int ey = e.getLocation().getBlockY();
+            int ex = e.getLocation().getBlockX();
+            int ez = e.getLocation().getBlockZ();
+            if (ex >= a.ox && ex < a.ox + W && ey >= a.oy && ey < a.oy + H
+                    && ez >= a.oz && ez < a.oz + D) {
+                e.remove();
+            }
+        }
+
         int minWx = cx << 4, maxWx = minWx + 15;
         int minWz = cz << 4, maxWz = minWz + 15;
         for (int lx = 0; lx < W; lx++) {

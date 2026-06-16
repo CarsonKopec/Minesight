@@ -6,7 +6,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.CommonListenerCookie;
@@ -53,8 +52,11 @@ public final class NmsBot extends BotEpisode {
         MinecraftServer server = ((CraftServer) Bukkit.getServer()).getServer();
         ServerLevel level = ((CraftWorld) world).getHandle();
         GameProfile profile = new GameProfile(UUID.randomUUID(), name);
-        ServerPlayer p = new ServerPlayer(server, level, profile, ClientInformation.createDefault());
+        // BotServerPlayer (not a plain ServerPlayer) so the server moves it
+        // server-authoritatively from our impulse input.
+        BotServerPlayer p = new BotServerPlayer(server, level, profile);
         p.setPos(pos.x() + 0.5, pos.y(), pos.z() + 0.5);
+        p.setGlowingTag(true);   // glowing outline - watch the bot through walls
 
         // A fake connection with an embedded (loopback) channel so the player
         // can be "placed" without a real client behind it.

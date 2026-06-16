@@ -35,6 +35,7 @@ public final class ZombieBot extends BotEpisode {
             z.customName(net.kyori.adventure.text.Component.text(name));
             z.setCustomNameVisible(true);
             z.setShouldBurnInDay(false);
+            z.setGlowing(true);   // see the bot through walls
             if (z.getEquipment() != null) {
                 z.getEquipment().setItemInMainHand(new ItemStack(Material.NETHERITE_PICKAXE));
             }
